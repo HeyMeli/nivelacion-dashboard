@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard · Programa de Nivelación · UCSUR</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">UC</div>
+    <div>
+      <h1>Programa de Nivelación</h1>
+      <p>Departamento Académico de Cursos Básicos · Universidad Científica del Sur</p>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <div style="font-size:11px;opacity:.85;text-align:right;">
+      <div id="periodoTag"></div>
+    </div>
+    <button class="btn-outline" id="btnExportReport" style="background:#fff;white-space:nowrap;">📄 Exportar informe</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-page="participantes" class="active">Participantes</button>
+  <button data-page="asistencia">Asistencia</button>
+  <button data-page="rendimiento">Rendimiento</button>
+  <button data-page="satisfaccion">Satisfacción</button>
+  <button data-page="comparativo">Comparativo</button>
+</nav>
+
+<div class="data-panel" id="dataPanel">
+  <div class="dp-group">
+    <label>Asistencia y calificaciones · GIE-DCB-FOR-01</label>
+    <div class="dp-file">
+      <span class="tag">.xlsx</span>
+      <input type="file" id="fileAtt" accept=".xlsx,.xls">
+    </div>
+    <div class="dp-file-status" id="attStatus"></div>
+  </div>
+  <div class="dp-group">
+    <label>Satisfacción · GIE-DCB-FOR-02</label>
+    <div class="dp-file">
+      <span class="tag">.xlsx</span>
+      <input type="file" id="fileSat" accept=".xlsx,.xls">
+    </div>
+    <div class="dp-file-status" id="satStatus"></div>
+  </div>
+  <button class="btn-outline" id="btnDownloadDb">⬇️ Descargar base de datos (.xlsx)</button>
+  <button class="btn-outline" id="btnRestore">Restaurar datos originales</button>
+  <div class="dp-file-status" id="autosaveStatus" style="flex-basis:100%;"></div>
+</div>
+<div class="note" style="background:var(--blue-050);border-bottom:1px solid var(--line);margin:0;padding:6px 24px;">
+  Puedes subir un archivo por cada semestre (con la columna "Periodo académico" / "Semestre" correctamente llenada, ej. "2024-1"): los periodos nuevos se <strong>agregan</strong> al historial y, si vuelves a subir uno ya cargado, se reemplaza sin duplicar. Con 2 o más periodos cargados se habilita la pestaña <strong>Comparativo</strong>. Los cambios se autoguardan en este navegador; usa "Descargar base de datos" para tener además una copia en Excel que puedas respaldar o mover a otra computadora.
+</div>
+
+<div class="filters" id="filters">
+  <div class="filter-group">
+    <label>Periodo académico</label>
+    <select id="fPeriodo" style="border-color:var(--blue-600);font-weight:700;color:var(--blue-800);"><option value="">Todos los periodos</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Facultad</label>
+    <select id="fFacultad"><option value="">Todas</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Carrera</label>
+    <select id="fCarrera"><option value="">Todas</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Sede</label>
+    <div class="pillrow" id="fSede"></div>
+  </div>
+  <div class="filter-group">
+    <label>Curso a nivelar</label>
+    <div class="pillrow" id="fCurso"></div>
+  </div>
+  <button class="filter-reset" id="resetFilters">Limpiar filtros</button>
+</div>
+
+<main id="main"></main>
+
+<div class="modal-overlay" id="reportModalOverlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>Antes de exportar el informe</h3>
+      <button class="modal-close" id="modalCloseBtn" type="button">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-hint" id="modalHint"></p>
+      <div class="preview-col" id="reportPreview"></div>
+      <div class="text-col">
+        <div class="memo-fields">
+          <div class="modal-field">
+            <label>Para — Nombre</label>
+            <input type="text" id="inParaNombre" placeholder="Ej. Marie Anne Gálvez Escudero">
+          </div>
+          <div class="modal-field">
+            <label>Para — Cargo</label>
+            <input type="text" id="inParaCargo" placeholder="Ej. Decano de la Carrera de Biología Marina">
+          </div>
+          <div class="modal-field">
+            <label>De — Nombre</label>
+            <input type="text" id="inDeNombre" placeholder="Ej. Joyce Del Pino Robles">
+          </div>
+          <div class="modal-field">
+            <label>De — Cargo</label>
+            <input type="text" id="inDeCargo" placeholder="Ej. Directora del Departamento Académico de Cursos Básicos">
+          </div>
+        </div>
+        <div class="modal-field">
+          <label>Conclusiones adicionales / análisis (opcional)</label>
+          <textarea id="taConclusiones" rows="6" placeholder="Escribe aquí observaciones o conclusiones propias sobre los resultados de este periodo (usa los cuadros de la izquierda como referencia). Se incluirán en el informe, después de las tablas de Participación, Asistencia, Rendimiento y Satisfacción."></textarea>
+        </div>
+        <div class="modal-field">
+          <label>Recomendaciones</label>
+          <textarea id="taRecomendaciones" rows="3"></textarea>
+        </div>
+        <div class="modal-field">
+          <label>Acciones que se tomarán en DACB (una por línea)</label>
+          <textarea id="taAcciones" rows="4"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-outline" id="btnResetText" type="button">Restaurar textos por defecto</button>
+      <button class="btn-primary" id="btnGenerateReport" type="button">Generar informe →</button>
+    </div>
+  </div>
+</div>
+
+<footer class="foot">Dashboard del Programa de Nivelación · Formatos GIE-DCB-FOR-01 (asistencia/notas) y GIE-DCB-FOR-02 (satisfacción)</footer>
+
+<script src="js/app.js"></script>
+</body>
+</html>
