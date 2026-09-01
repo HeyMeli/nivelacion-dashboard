@@ -62,16 +62,24 @@ function isAppsScriptWriteUrl(url){
 // Re-scans an already-parsed workbook for its raw header row + data rows (same header
 // detection parseAttendanceWorkbook/parseSatisfactionWorkbook use), to forward as-is to the
 // Apps Script doPost endpoint — kept separate so those two keep returning normalized records.
-function extractRawRows(workbook, requiredHeaders){
+// periodoHeader (optional): the periodo/semestre column also gets checked for a bare Excel date
+// serial number (see looksLikeExcelDateSerial), not just other columns' actual Date cells — a
+// column reformatted to "Texto plano" in Excel stops producing Date objects but keeps the raw
+// number, which normHeader() already guards against in the LOCAL parse but this raw push needs
+// its own check since it doesn't go through normHeader.
+function extractRawRows(workbook, requiredHeaders, periodoHeader){
   const matrix = sheetToMatrix(workbook, ['REGISTRO']);
   const headerIdx = findHeaderRow(matrix, requiredHeaders);
   if(headerIdx === -1) return null;
   const headers = matrix[headerIdx];
+  const periodoIdx = periodoHeader ? headers.indexOf(periodoHeader) : -1;
   // Dates go through as plain "YYYY-MM-DD" text (see dateCellToText) instead of a raw JS Date —
   // JSON.stringify would otherwise turn it into a UTC timestamp that Apps Script re-parses into a
   // DIFFERENT date once it lands back in the sheet.
   const rows = matrix.slice(headerIdx + 1)
     .filter(r => r && r.some(c => c!=null && c!==''))
+    .map(r => periodoIdx === -1 || !looksLikeExcelDateSerial(r[periodoIdx]) ? r :
+      r.map((c, i) => i === periodoIdx ? excelSerialToText(c) : c))
     .map(r => r.map(c => c instanceof Date ? dateCellToText(c) : c));
   return { headers, rows };
 }
@@ -973,9 +981,25 @@ function dateCellToText(v){
   return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
 }
 
+// Excel/Sheets store dates as a serial number of days since 1899-12-30. Reformatting a column
+// that already held an auto-converted date to "Texto plano" only changes how FUTURE edits are
+// typed — the value already there stays numeric, so instead of a JS Date it leaks through as a
+// bare float like 46022.99958333333. Converts it the same way Excel would, so at least it renders
+// as a readable date instead of that meaningless number.
+function excelSerialToText(n){
+  return dateCellToText(new Date(Math.round((n - 25569) * 86400000)));
+}
+function looksLikeExcelDateSerial(v){
+  // Real academic-period/ciclo values in this project are always small integers (ciclo) or text
+  // (periodo/semestre) — nothing here legitimately reaches 5-digit numbers, so treat one as a
+  // corrupted date. Range covers roughly year 1954–2119.
+  return typeof v === 'number' && v > 20000 && v < 80000;
+}
+
 function normHeader(v){
   if(v==null) return '';
   if(v instanceof Date) return dateCellToText(v);
+  if(looksLikeExcelDateSerial(v)) return excelSerialToText(v);
   return String(v).replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
 }
 
@@ -1260,7 +1284,7 @@ function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpt
       const liveUrl = rawPushOpts && rawPushOpts.getLiveUrl();
       if(isAppsScriptWriteUrl(liveUrl)){
         try{
-          const raw = extractRawRows(workbook, rawPushOpts.requiredHeaders);
+          const raw = extractRawRows(workbook, rawPushOpts.requiredHeaders, rawPushOpts.periodoHeader);
           if(raw){
             const result = await pushRawRowsToSheet(liveUrl, raw.headers, raw.rows, rawPushOpts.periodoHeader);
             msg += ` — ✓ guardado también en la base de datos compartida (${result.escritos} filas${result.reemplazados ? ', ' + result.reemplazados + ' reemplazadas' : ''}).`;
