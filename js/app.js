@@ -504,16 +504,19 @@ function renderParticipantes(main, rows){
   const matriculas = rows.length;
   const estudiantesUnicos = new Set(rows.map(r=>r.id)).size;
   const participantesRows = rows.filter(r=>r.condicion==='Participante');
-  const estudiantesParticipantes = new Set(participantesRows.map(r=>r.id)).size;
-  const estudiantesNoPart = estudiantesUnicos - estudiantesParticipantes;
+  // A pedido explícito: "Participaron"/"No participaron" cuentan MATRÍCULAS (filas), no
+  // estudiantes únicos — un estudiante en 2 cursos cuenta 2 veces aquí. Solo en esta pestaña;
+  // el resto del dashboard y el informe exportado siguen contando personas únicas por ID.
+  const estudiantesParticipantes = participantesRows.length;
+  const estudiantesNoPart = matriculas - estudiantesParticipantes;
   const retirados = computeRetirados(rows);
   const noMatriculados = computeNoMatriculados(rows);
 
   const kpis = el('div',{class:'grid kpi-row'});
   kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
   kpis.appendChild(kpi('Matriculados', matriculas));
-  kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes));
-  kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart));
+  kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
+  kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
   kpis.appendChild(kpi('Retirados del programa', retirados));
   kpis.appendChild(kpi('No matriculados', noMatriculados));
   main.appendChild(kpis);
@@ -1057,6 +1060,13 @@ function sheetToMatrix(workbook, preferredNames){
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 }
 
+// El Excel oficial trae "% de asistencia" ya calculado como Asistencias/7 (asumiendo el curso
+// completo). El cliente indicó que, mientras el semestre esté en curso, hay que evaluarla sobre
+// el número de sesiones REALMENTE dictadas a la fecha (por ahora 4, no 7) — así que el dashboard
+// ignora esa columna del Excel y calcula su propio % de asistencia con este número. Cuando se
+// dicten más sesiones, actualiza este valor (y vuelve a publicar) para que refleje el total real.
+const SESIONES_DICTADAS = 4;
+
 const ATT_FIELD_DEFS = {
   id: ['ID'], nombre: ['Apellidos y Nombres'], carrera: ['Carrera'], facultad: ['Facultad'],
   sede: ['Sede'], seccion: ['Sección'], curso: ['Curso a nivelar'], periodo: ['Periodo académico'],
@@ -1099,7 +1109,9 @@ function parseAttendanceWorkbook(workbook){
       s1: cleanNum(get('s1')), s2: cleanNum(get('s2')), s3: cleanNum(get('s3')), s4: cleanNum(get('s4')),
       s5: cleanNum(get('s5')), s6: cleanNum(get('s6')), s7: cleanNum(get('s7')),
       asistencias,
-      pctAsist: (() => { const v = cleanNum(get('pctAsist')); return v==null ? null : Math.round(v*10000)/100; })(),
+      // Recalculado sobre SESIONES_DICTADAS (ver comentario junto a esa constante), no leído de la
+      // columna "% de asistencia" del Excel — esa sigue asumiendo el curso completo (÷7).
+      pctAsist: Math.round((asistencias / SESIONES_DICTADAS) * 10000) / 100,
       ed: cleanNum(get('ed')), ec1: cleanNum(get('ec1')), ep: cleanNum(get('ep')),
       avanceObt: cleanNum(get('avanceObt')), avanceIdeal: cleanNum(get('avanceIdeal')),
       eficacia: cleanNum(get('eficacia')),
