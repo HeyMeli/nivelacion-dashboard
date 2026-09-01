@@ -393,13 +393,20 @@ function donutChart(ctx, labels, data, colors, opts={}){
   });
 }
 
+// responsive:false on purpose: the gauge card overlays its %-label on top of the arc via a fixed
+// -46px negative margin (see .gval in styles.css), which only lines up if the canvas is ALWAYS the
+// same pixel size. With responsive:true inside .gauge-wrap (a flex column with no fixed height),
+// Chart.js resizes the canvas to match its container — but the container's height is itself
+// determined by the canvas's content, a circular dependency that Chart.js can settle at a
+// different height on any redraw (e.g. the resize check it runs on hover), making the number jump.
+// Fixed HTML width/height (below) sidesteps that entirely.
 function gaugeChart(ctx, value, max, color){
   const pct = Math.max(0, Math.min(1, value/max));
   return new Chart(ctx,{
     type:'doughnut',
     data:{ datasets:[{ data:[pct, 1-pct], backgroundColor:[color||BLUE[0], '#E9F0FA'], borderWidth:0 }]},
     options:{
-      responsive:true, maintainAspectRatio:false, cutout:'72%',
+      responsive:false, cutout:'72%',
       rotation:-90, circumference:180,
       plugins:{ legend:{display:false}, tooltip:{enabled:false}, datalabels:{display:false} }
     }
@@ -408,7 +415,7 @@ function gaugeChart(ctx, value, max, color){
 
 function gaugeCard(id, label, value, max, fmt, color){
   const wrap = el('div',{class:'gauge-wrap'});
-  const c = el('canvas',{id, height:'110'});
+  const c = el('canvas',{id, width:'150', height:'110'});
   wrap.appendChild(c);
   const vEl = el('div',{class:'gval'}, fmt(value));
   const lEl = el('div',{class:'glabel'}, label);
