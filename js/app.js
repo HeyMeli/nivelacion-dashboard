@@ -9,14 +9,74 @@ let attSourceName = null; // filename of last uploaded attendance file, or null 
 let satSourceName = null;
 let loadedFromSnapshot = false; // true if ATT/SAT were restored from this browser's autosave at init
 
+// "Live" source: data/source-config.json holds two URLs (Google Sheets published as CSV, or an
+// Apps Script Web App — see README) that, when set, are fetched fresh every time ANYONE opens the
+// link, so the whole team sees the same up-to-date data without anyone touching git. A personal
+// localStorage override lets one person test their own URLs before committing them for everyone.
+const LIVE_CONFIG_KEY = 'nivelacion_source_config_override';
+let sourceConfig = { attendanceUrl: '', satisfactionUrl: '' };
+let liveAttOk = false, liveSatOk = false; // whether each half actually loaded live on the last attempt
+
+async function loadSourceConfig(){
+  let cfg = { attendanceUrl: '', satisfactionUrl: '' };
+  try{
+    const res = await fetch('data/source-config.json', { cache: 'no-store' });
+    if(res.ok){ const j = await res.json(); cfg = { attendanceUrl: j.attendanceUrl||'', satisfactionUrl: j.satisfactionUrl||'' }; }
+  }catch(err){ /* file missing or unreachable (e.g. opened via file://) — stay with local data */ }
+  try{
+    const override = localStorage.getItem(LIVE_CONFIG_KEY);
+    if(override){ const j = JSON.parse(override); if(j.attendanceUrl) cfg.attendanceUrl = j.attendanceUrl; if(j.satisfactionUrl) cfg.satisfactionUrl = j.satisfactionUrl; }
+  }catch(err){ /* localStorage unavailable or corrupt override — ignore */ }
+  return cfg;
+}
+
+// Fetches a URL as text and parses it as CSV/TSV via SheetJS, then runs it through the SAME
+// column-matching parser used for uploaded Excel files — so a live Google Sheet just needs the
+// same header row (ID, Apellidos y Nombres, Carrera... / Carrera, Semestre, Curso, P1...) as the
+// official Excel formats.
+async function fetchLiveRecords(url, parseFn){
+  const sep = url.includes('?') ? '&' : '?';
+  let res;
+  try{
+    res = await fetch(url + sep + '_ts=' + Date.now(), { cache: 'no-store' });
+  }catch(err){
+    // A generic "Failed to fetch" TypeError is what browsers throw for both CORS blocks and
+    // network/DNS failures, without exposing which one for security reasons — this is the most
+    // common failure mode when someone forgets to set the sheet to "Anyone with the link", so we
+    // point at that first since it's the most fixable and most likely cause.
+    throw new Error('No se pudo conectar (posible bloqueo CORS o la hoja no es pública). Revisa que esté compartida como "Cualquiera con el enlace puede ver", o usa el método de Apps Script del README.');
+  }
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  if(/^\s*<(!DOCTYPE|html)/i.test(text)) throw new Error('La URL devolvió una página HTML, no datos — revisa que el enlace sea el de exportar/publicar como CSV, y que la hoja esté compartida como "Cualquiera con el enlace".');
+  const workbook = XLSX.read(text, { type: 'string' });
+  const records = parseFn(workbook);
+  if(!records.length) throw new Error('La fuente respondió pero no se encontraron registros con el formato esperado.');
+  return records;
+}
+
 async function loadBaseData(){
-  const [attRes, satRes] = await Promise.all([
-    fetch('data/attendance.json'),
-    fetch('data/satisfaction.json')
-  ]);
-  if(!attRes.ok || !satRes.ok) throw new Error(`HTTP ${attRes.status}/${satRes.status}`);
-  ATT = await attRes.json();
-  SAT = await satRes.json();
+  sourceConfig = await loadSourceConfig();
+  liveAttOk = false; liveSatOk = false;
+
+  if(sourceConfig.attendanceUrl){
+    try{ ATT = await fetchLiveRecords(sourceConfig.attendanceUrl, parseAttendanceWorkbook); liveAttOk = true; }
+    catch(err){ console.error('Fuente en vivo de asistencia falló, usando respaldo local:', err); }
+  }
+  if(sourceConfig.satisfactionUrl){
+    try{ SAT = await fetchLiveRecords(sourceConfig.satisfactionUrl, parseSatisfactionWorkbook); liveSatOk = true; }
+    catch(err){ console.error('Fuente en vivo de satisfacción falló, usando respaldo local:', err); }
+  }
+
+  if(!liveAttOk || !liveSatOk){
+    const [attRes, satRes] = await Promise.all([
+      liveAttOk ? null : fetch('data/attendance.json'),
+      liveSatOk ? null : fetch('data/satisfaction.json')
+    ]);
+    if(!liveAttOk){ ATT = (attRes && attRes.ok) ? await attRes.json() : []; }
+    if(!liveSatOk){ SAT = (satRes && satRes.ok) ? await satRes.json() : []; }
+  }
+
   ORIGINAL_ATT = JSON.parse(JSON.stringify(ATT));
   ORIGINAL_SAT = JSON.parse(JSON.stringify(SAT));
 }
@@ -1646,6 +1706,135 @@ function generateReportFromModal(){
     });
 }
 
+// ============ LIVE SOURCE CONFIG (Google Sheets / Apps Script) ============
+
+function updateLiveStatusUI(){
+  const tag = document.getElementById('liveStatusTag');
+  const refreshBtn = document.getElementById('btnRefreshLive');
+  const anyLive = liveAttOk || liveSatOk;
+  if(!anyLive){
+    tag.style.display = 'none';
+    refreshBtn.style.display = 'none';
+    return;
+  }
+  tag.style.display = 'block';
+  refreshBtn.style.display = 'inline-block';
+  const when = new Date().toLocaleTimeString('es-PE', { hour:'2-digit', minute:'2-digit' });
+  const parts = [];
+  if(sourceConfig.attendanceUrl) parts.push('Asistencia: ' + (liveAttOk ? '🟢' : '⚠️ respaldo local'));
+  if(sourceConfig.satisfactionUrl) parts.push('Satisfacción: ' + (liveSatOk ? '🟢' : '⚠️ respaldo local'));
+  tag.textContent = `🔴 En vivo (${when}) — ${parts.join(' · ')}`;
+}
+
+async function refreshLiveData(){
+  const btn = document.getElementById('btnRefreshLive');
+  const original = btn.textContent;
+  btn.textContent = '⏳';
+  btn.disabled = true;
+  try{
+    await loadBaseData();
+    afterDataChange();
+    updateLiveStatusUI();
+  }catch(err){
+    console.error('No se pudo actualizar desde la fuente en vivo:', err);
+    alert('No se pudo actualizar desde la fuente en vivo. Se mantienen los datos actuales.');
+  }finally{
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+}
+
+function openLiveConfigModal(){
+  document.getElementById('liveAttUrl').value = sourceConfig.attendanceUrl || '';
+  document.getElementById('liveSatUrl').value = sourceConfig.satisfactionUrl || '';
+  document.getElementById('liveAttTestResult').textContent = '';
+  document.getElementById('liveAttTestResult').className = 'dp-file-status';
+  document.getElementById('liveSatTestResult').textContent = '';
+  document.getElementById('liveSatTestResult').className = 'dp-file-status';
+  document.getElementById('liveConfigCommitBlock').style.display = 'none';
+  document.getElementById('liveConfigModalOverlay').classList.add('open');
+}
+function closeLiveConfigModal(){
+  document.getElementById('liveConfigModalOverlay').classList.remove('open');
+}
+
+async function testLiveConfig(){
+  const attUrl = document.getElementById('liveAttUrl').value.trim();
+  const satUrl = document.getElementById('liveSatUrl').value.trim();
+  const attResultEl = document.getElementById('liveAttTestResult');
+  const satResultEl = document.getElementById('liveSatTestResult');
+  const testBtn = document.getElementById('btnTestLiveConfig');
+
+  testBtn.disabled = true;
+  testBtn.textContent = '⏳ Probando…';
+
+  let attOk = !attUrl, satOk = !satUrl; // no URL entered counts as "not attempted", not a failure
+  if(attUrl){
+    attResultEl.textContent = 'Probando…'; attResultEl.className = 'dp-file-status';
+    try{
+      const records = await fetchLiveRecords(attUrl, parseAttendanceWorkbook);
+      attResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
+      attResultEl.className = 'dp-file-status ok';
+      attOk = true;
+    }catch(err){
+      attResultEl.textContent = `✗ ${err.message}`;
+      attResultEl.className = 'dp-file-status err';
+    }
+  }
+  if(satUrl){
+    satResultEl.textContent = 'Probando…'; satResultEl.className = 'dp-file-status';
+    try{
+      const records = await fetchLiveRecords(satUrl, parseSatisfactionWorkbook);
+      satResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
+      satResultEl.className = 'dp-file-status ok';
+      satOk = true;
+    }catch(err){
+      satResultEl.textContent = `✗ ${err.message}`;
+      satResultEl.className = 'dp-file-status err';
+    }
+  }
+
+  testBtn.disabled = false;
+  testBtn.textContent = '🔎 Probar conexión';
+
+  const commitBlock = document.getElementById('liveConfigCommitBlock');
+  if(attOk && satOk && (attUrl || satUrl)){
+    const json = JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }, null, 2);
+    document.getElementById('liveConfigJsonOutput').value = json;
+    commitBlock.style.display = 'block';
+  } else {
+    commitBlock.style.display = 'none';
+  }
+}
+
+function saveLiveConfigLocally(){
+  const attUrl = document.getElementById('liveAttUrl').value.trim();
+  const satUrl = document.getElementById('liveSatUrl').value.trim();
+  try{
+    localStorage.setItem(LIVE_CONFIG_KEY, JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }));
+    alert('Guardado solo en este navegador. Recarga la página para probarlo — esto NO afecta lo que ve el resto del equipo.');
+  }catch(err){
+    alert('No se pudo guardar en este navegador: ' + err.message);
+  }
+}
+
+function clearLiveConfigLocally(){
+  try{ localStorage.removeItem(LIVE_CONFIG_KEY); }catch(err){}
+  alert('Prueba local eliminada. Recarga la página para volver a la configuración oficial del repositorio.');
+}
+
+function setupLiveConfigModal(){
+  document.getElementById('btnLiveConfig').addEventListener('click', openLiveConfigModal);
+  document.getElementById('liveConfigCloseBtn').addEventListener('click', closeLiveConfigModal);
+  document.getElementById('liveConfigModalOverlay').addEventListener('click', (e)=>{
+    if(e.target.id === 'liveConfigModalOverlay') closeLiveConfigModal();
+  });
+  document.getElementById('btnTestLiveConfig').addEventListener('click', testLiveConfig);
+  document.getElementById('btnSaveLiveLocal').addEventListener('click', saveLiveConfigLocally);
+  document.getElementById('btnClearLiveLocal').addEventListener('click', clearLiveConfigLocally);
+  document.getElementById('btnRefreshLive').addEventListener('click', refreshLiveData);
+}
+
 function setupExportModal(){
   document.getElementById('btnExportReport').addEventListener('click', openExportModal);
   document.getElementById('modalCloseBtn').addEventListener('click', closeExportModal);
@@ -1729,17 +1918,28 @@ async function initApp(){
     return;
   }
 
-  const snapshot = await loadSnapshot();
-  if(snapshot && Array.isArray(snapshot.att) && snapshot.att.length){
-    ATT = snapshot.att;
-    SAT = Array.isArray(snapshot.sat) ? snapshot.sat : [];
-    loadedFromSnapshot = true;
-    const when = snapshot.savedAt ? new Date(snapshot.savedAt).toLocaleString('es-PE', { dateStyle:'short', timeStyle:'short' }) : '';
-    setAutosaveStatus(`💾 Datos restaurados automáticamente de tu última sesión en este navegador${when ? ' (' + when + ')' : ''}.`, 'ok');
-  } else if(autosaveEnabled){
-    setAutosaveStatus('Los cambios se guardarán automáticamente en este navegador.', '');
+  const anyLiveOk = liveAttOk || liveSatOk;
+
+  if(anyLiveOk){
+    // Live data loaded successfully — this is the current shared truth, so it takes priority
+    // over any older personal autosave snapshot (which could otherwise mask live updates).
+    const parts = [];
+    if(sourceConfig.attendanceUrl) parts.push(liveAttOk ? 'asistencia ✓' : 'asistencia (respaldo local)');
+    if(sourceConfig.satisfactionUrl) parts.push(liveSatOk ? 'satisfacción ✓' : 'satisfacción (respaldo local)');
+    setAutosaveStatus(`🔴 Datos en vivo cargados (${parts.join(', ')}). Los cambios que subas aquí seguirán autoguardándose solo en este navegador.`, 'ok');
   } else {
-    setAutosaveStatus('⚠️ Este navegador no admite autoguardado; usa "Descargar base de datos" para no perder tus cambios.', 'err');
+    const snapshot = await loadSnapshot();
+    if(snapshot && Array.isArray(snapshot.att) && snapshot.att.length){
+      ATT = snapshot.att;
+      SAT = Array.isArray(snapshot.sat) ? snapshot.sat : [];
+      loadedFromSnapshot = true;
+      const when = snapshot.savedAt ? new Date(snapshot.savedAt).toLocaleString('es-PE', { dateStyle:'short', timeStyle:'short' }) : '';
+      setAutosaveStatus(`💾 Datos restaurados automáticamente de tu última sesión en este navegador${when ? ' (' + when + ')' : ''}.`, 'ok');
+    } else if(autosaveEnabled){
+      setAutosaveStatus('Los cambios se guardarán automáticamente en este navegador.', '');
+    } else {
+      setAutosaveStatus('⚠️ Este navegador no admite autoguardado; usa "Descargar base de datos" para no perder tus cambios.', 'err');
+    }
   }
 
   state.periodo = latestPeriod();
@@ -1747,6 +1947,8 @@ async function initApp(){
   setupTabs();
   setupDataPanel();
   setupExportModal();
+  setupLiveConfigModal();
+  updateLiveStatusUI();
   document.getElementById('btnDownloadDb').addEventListener('click', exportConsolidatedExcel);
   render();
 }

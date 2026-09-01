@@ -88,6 +88,93 @@ Cada vez que hagan `git push` a `main`, la página se actualiza sola.
 
 ---
 
+## Base de datos "en vivo" (sin git, sin backend)
+
+Si prefieres no depender de `git push` cada semestre, puedes conectar el dashboard a una
+**Google Sheet publicada** (o una hoja de Excel Online) que edites como una hoja de cálculo
+normal — el dashboard la vuelve a consultar **cada vez que alguien abre el link**, así que
+los cambios se ven en vivo, sin comandos ni commits.
+
+⚠️ **Importante sobre seguridad de navegadores (CORS):** los navegadores bloquean que una
+página web lea datos de otro dominio a menos que ese dominio lo permita explícitamente.
+Probamos ambos métodos de abajo en un navegador real: el método simple (Opción 1) puede
+fallar según cómo Google sirva tu hoja en un momento dado — por eso el dashboard **siempre
+prueba la conexión antes de usarla** y, si falla, muestra el error exacto y recae
+automáticamente en los datos locales sin romperse. El método de Apps Script (Opción 2) es
+más confiable porque tú controlas la respuesta.
+
+### Cómo se activa
+
+1. Crea tu Google Sheet con las mismas columnas que el Excel oficial (puedes copiar/pegar
+   el contenido de un GIE-DCB-FOR-01/02 directamente en una hoja nueva).
+2. Consigue una URL pública siguiendo la **Opción 1** o la **Opción 2** de abajo.
+3. Abre el dashboard → botón **⚙️** (arriba a la derecha) → pega la(s) URL(s) →
+   **🔎 Probar conexión**.
+4. Si dice "✓ Conectado", copia el JSON que aparece y súbelo como
+   `data/source-config.json` al repositorio (a mano en github.com, o con git — una sola vez).
+5. Listo: desde ahora, todo el equipo que abra el link consulta la hoja en vivo. El ícono
+   🔄 en el encabezado permite forzar una actualización sin recargar toda la página.
+
+Si solo quieres probar antes de hacerlo oficial, usa **"💾 Guardar solo para mí"** en vez
+de subirlo al repo — queda guardado solo en tu navegador para que lo pruebes primero.
+
+### Opción 1 — Google Sheet publicada como CSV (más simple, pruébala primero)
+
+1. En tu Google Sheet: **Archivo → Compartir → Publicar en la Web**.
+2. Elige la hoja/pestaña específica (ej. "Asistencia") y el formato **Valores separados por
+   comas (.csv)** → **Publicar**.
+3. Copia la URL que te da (algo como
+   `https://docs.google.com/spreadsheets/d/e/2PACX-.../pub?gid=0&single=true&output=csv`).
+4. Además, en **Compartir** (botón azul arriba a la derecha, no "Publicar"), asegúrate de
+   que el acceso general esté en **"Cualquiera con el enlace" → Lector** — sin esto, ni
+   publicado funcionará.
+5. Pega esa URL en el dashboard y prueba la conexión. Si falla con un mensaje sobre CORS,
+   pasa a la Opción 2.
+
+### Opción 2 — Apps Script Web App (más confiable, recomendada si la Opción 1 falla)
+
+Esto crea una mini-API propia a partir de tu Google Sheet, sin escribir código real —
+solo pegar este script una vez:
+
+1. En tu Google Sheet: **Extensiones → Apps Script**.
+2. Borra el contenido y pega esto:
+   ```javascript
+   function doGet(e) {
+     var sheetName = e.parameter.sheet || SpreadsheetApp.getActiveSpreadsheet().getSheets()[0].getName();
+     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+     var data = sheet.getDataRange().getValues();
+     var csv = data.map(function(row){
+       return row.map(function(cell){
+         if (Object.prototype.toString.call(cell) === '[object Date]') {
+           return Utilities.formatDate(cell, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+         }
+         var s = String(cell);
+         return (s.indexOf(',') > -1 || s.indexOf('"') > -1) ? '"' + s.replace(/"/g,'""') + '"' : s;
+       }).join(',');
+     }).join('\n');
+     return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
+   }
+   ```
+3. Guarda (ícono de disco), ponle un nombre al proyecto.
+4. **Implementar → Nueva implementación** → tipo **Aplicación web**.
+5. Configura: **Ejecutar como: Yo** / **Quién tiene acceso: Cualquier usuario** → **Implementar**.
+6. Autoriza los permisos que pida (es tu propio script, sobre tu propia hoja).
+7. Copia la URL que te da (termina en `/exec`). Si tu hoja tiene varias pestañas, agrégale
+   `?sheet=NombreDeLaPestaña` al final (ej. `.../exec?sheet=Asistencia`).
+8. Pega esa URL en el dashboard y prueba la conexión.
+
+Cada vez que edites la Google Sheet, ambos métodos reflejan el cambio de inmediato — no
+hace falta volver a implementar el script ni republicar, solo recargar el dashboard (o
+usar el botón 🔄).
+
+### Si prefieres no usar una fuente en vivo
+
+No pasa nada — deja `data/source-config.json` con las URLs vacías (como viene por
+defecto) y el dashboard sigue funcionando exactamente como se describe en la sección
+siguiente ("Cómo funcionan los datos"), con `data/*.json` actualizado por git.
+
+---
+
 ## Cómo funcionan los datos
 
 **Lo importante primero:** el link que da GitHub Pages muestra a **todo el equipo por
@@ -103,6 +190,7 @@ trabajo entre sesiones — pero el resto del equipo, al entrar por el link, no l
 |--------------------------------------------------------------|:---:|
 | Subir un Excel con el panel *dentro* del dashboard ya abierto | ❌ No (solo en tu navegador) |
 | Reemplazar `data/*.json` en el repositorio de GitHub          | ✅ Sí, para todos |
+| Configurar una fuente en vivo (sección anterior)              | ✅ Sí, para todos — y sin volver a tocar git |
 
 Entonces, para que aparezcan datos nuevos en la versión que ve todo el equipo, hay que
 actualizar los archivos del repositorio. Dos formas de hacerlo, de más simple a más
@@ -126,7 +214,7 @@ actualizar los archivos del repositorio. Dos formas de hacerlo, de más simple a
 
 No requiere terminal ni git — solo el navegador.
 
-### Opción B — Con git (más rápido si ya lo usan seguido)
+### Opción B — Con git paso a paso (si prefieres ver cada comando)
 
 ```bash
 pip install pandas openpyxl   # solo la primera vez
@@ -140,7 +228,23 @@ git commit -m "Agrega datos del periodo 2025-2"
 git push
 ```
 
-Ambas opciones **agregan** el nuevo periodo a los datos existentes (si el periodo ya
+### Opción C — Un solo comando (la más rápida si repites esto seguido)
+
+```bash
+pip install pandas openpyxl   # solo la primera vez
+
+./scripts/publish_data.sh \
+  --att ruta/al/GIEDCBFOR01_nuevo_semestre.xlsx \
+  --sat ruta/al/GIEDCBFOR02_nuevo_semestre.xlsx
+```
+
+Hace todo junto: convierte el Excel, y si hay cambios, los sube automáticamente
+(`git add` + `commit` + `push`) con un mensaje de commit que detecta solo los periodos
+incluidos. Si no hay cambios nuevos, no crea un commit vacío. En Windows, corre con
+`bash scripts/publish_data.sh ...` (Git Bash, que ya viene con Git para Windows) o
+`wsl bash scripts/publish_data.sh ...`.
+
+Las tres opciones **agregan** el nuevo periodo a los datos existentes (si el periodo ya
 existía, lo reemplaza — no duplica). `--replace-all` en vez de agregar, ignora lo que
 había y deja solo el archivo nuevo.
 
@@ -149,7 +253,7 @@ había y deja solo el archivo nuevo.
 Sigue siendo útil para: probar datos antes de publicarlos oficialmente, o para uso
 personal de alguien que solo quiere revisar algo puntual sin tocar el repositorio.
 El botón **"Descargar base de datos (.xlsx)"** exporta lo que tengas cargado ahí como
-Excel real — que es justamente el archivo que puedes usar en la Opción A o B de arriba
+Excel real — que es justamente el archivo que puedes usar en la Opción A, B o C de arriba
 para "oficializar" esos datos y que los vea todo el equipo.
 
 ---
@@ -165,10 +269,12 @@ nivelacion-dashboard/
 │   └── app.js               # Toda la lógica: filtros, gráficos, carga de Excel,
 │                             #   autoguardado, exportación de informe y de base de datos
 ├── data/
-│   ├── attendance.json      # Datos base de asistencia/notas (GIE-DCB-FOR-01)
-│   └── satisfaction.json    # Datos base de satisfacción (GIE-DCB-FOR-02)
+│   ├── attendance.json       # Datos base de asistencia/notas (GIE-DCB-FOR-01)
+│   ├── satisfaction.json     # Datos base de satisfacción (GIE-DCB-FOR-02)
+│   └── source-config.json    # URLs opcionales de la fuente de datos en vivo (Google Sheets)
 ├── scripts/
-│   └── build_data.py        # Regenera data/*.json a partir de nuevos Excel oficiales
+│   ├── build_data.py         # Regenera data/*.json a partir de nuevos Excel oficiales
+│   └── publish_data.sh       # Atajo: build_data.py + git add/commit/push en un paso
 └── README.md
 ```
 
@@ -195,6 +301,8 @@ Librerías usadas (vía CDN, no hay que instalar nada para ver el dashboard):
   imágenes reales de los gráficos (participación, asistencia, rendimiento, satisfacción),
   igual que las capturas de dashboard del informe original.
 - **Descargar base de datos**: exporta todo lo cargado como Excel real, reimportable.
+- **Fuente de datos en vivo** (opcional): conecta una Google Sheet publicada para que el
+  equipo vea los mismos datos por el link sin necesidad de git — ver "Base de datos en vivo".
 
 ---
 

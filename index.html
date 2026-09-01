@@ -19,10 +19,13 @@
       <p>Departamento Académico de Cursos Básicos · Universidad Científica del Sur</p>
     </div>
   </div>
-  <div style="display:flex; align-items:center; gap:14px;">
+  <div style="display:flex; align-items:center; gap:10px;">
     <div style="font-size:11px;opacity:.85;text-align:right;">
       <div id="periodoTag"></div>
+      <div id="liveStatusTag" style="display:none;"></div>
     </div>
+    <button class="btn-outline" id="btnRefreshLive" style="display:none;background:#fff;white-space:nowrap;" title="Actualizar desde la fuente en vivo">🔄</button>
+    <button class="btn-outline" id="btnLiveConfig" style="background:#fff;white-space:nowrap;" title="Configurar fuente de datos en vivo">⚙️</button>
     <button class="btn-outline" id="btnExportReport" style="background:#fff;white-space:nowrap;">📄 Exportar informe</button>
   </div>
 </header>
@@ -85,6 +88,47 @@
 </div>
 
 <main id="main"></main>
+
+<div class="modal-overlay" id="liveConfigModalOverlay">
+  <div class="modal-card" style="max-width:640px;">
+    <div class="modal-head">
+      <h3>⚙️ Fuente de datos en vivo</h3>
+      <button class="modal-close" id="liveConfigCloseBtn" type="button">&times;</button>
+    </div>
+    <div class="modal-body" style="display:block;">
+      <p class="modal-hint" style="margin-bottom:14px;">
+        Pega aquí las URLs de tu Google Sheet publicada (o de tu Apps Script Web App) — ver el
+        README para cómo obtenerlas. Primero prueba la conexión; si funciona, "Guardar para todo
+        el equipo" te muestra el archivo que debes subir al repositorio para que quede oficial.
+      </p>
+      <div class="modal-field">
+        <label>URL de asistencia (GIE-DCB-FOR-01)</label>
+        <input type="text" id="liveAttUrl" placeholder="https://docs.google.com/spreadsheets/d/…/export?format=csv&gid=0">
+        <div class="dp-file-status" id="liveAttTestResult"></div>
+      </div>
+      <div class="modal-field">
+        <label>URL de satisfacción (GIE-DCB-FOR-02)</label>
+        <input type="text" id="liveSatUrl" placeholder="https://docs.google.com/spreadsheets/d/…/export?format=csv&gid=0">
+        <div class="dp-file-status" id="liveSatTestResult"></div>
+      </div>
+      <div style="display:flex; gap:8px; margin:14px 0;">
+        <button class="btn-outline" id="btnTestLiveConfig" type="button">🔎 Probar conexión</button>
+        <button class="btn-outline" id="btnSaveLiveLocal" type="button">💾 Guardar solo para mí (prueba)</button>
+      </div>
+      <div id="liveConfigCommitBlock" style="display:none;">
+        <p class="modal-hint">Conexión OK. Para que <strong>todo el equipo</strong> vea esto por
+          el link, copia este contenido dentro de <code>data/source-config.json</code> en el
+          repositorio (editar archivo en github.com o con git) y súbelo:</p>
+        <div class="modal-field">
+          <textarea id="liveConfigJsonOutput" rows="5" readonly style="font-family:monospace;font-size:11px;"></textarea>
+        </div>
+      </div>
+      <div class="modal-field" style="margin-top:10px;">
+        <button class="btn-outline" id="btnClearLiveLocal" type="button">🗑️ Quitar mi prueba local</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="reportModalOverlay">
   <div class="modal-card">
