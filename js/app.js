@@ -1271,22 +1271,40 @@ function afterDataChange(){
   saveSnapshot();
 }
 
+function readWorkbook(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      try{ resolve(XLSX.read(new Uint8Array(ev.target.result), { type: 'array' })); }
+      catch(err){ reject(err); }
+    };
+    reader.onerror = ()=> reject(new Error('Error al leer el archivo.'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 // rawPushOpts (optional): { requiredHeaders, periodoHeader, getLiveUrl } — when getLiveUrl()
 // resolves to an Apps Script Web App URL, also forwards the raw sheet rows to it via doPost so
 // the upload becomes the shared database instead of staying only in this browser's autosave.
-function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpts){
-  const file = inputEl.files && inputEl.files[0];
-  if(!file) return;
-  setFileStatus(statusId, `Leyendo "${file.name}"…`, '');
-  const reader = new FileReader();
-  reader.onload = async (ev)=>{
+// onSuccess(records, name) merges one file's records into the accumulated dataset — it must NOT
+// call afterDataChange() itself; this runs it once at the end, after every selected file (the
+// input allows multiple) has been processed, so a multi-file selection doesn't re-render/
+// re-autosave once per file. summaryFn() (no args) returns the trailing "total acumulado" line.
+async function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpts){
+  const files = inputEl.files ? Array.from(inputEl.files) : [];
+  if(!files.length) return;
+
+  const lines = [];
+  let anyOk = false;
+  for(const file of files){
+    setFileStatus(statusId, lines.concat(`Leyendo "${file.name}"…`).join(' · '), '');
     try{
-      const data = new Uint8Array(ev.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
+      const workbook = await readWorkbook(file);
       const records = parseFn(workbook);
       if(!records.length) throw new Error('El archivo no contiene registros con datos.');
       onSuccess(records, file.name);
-      let msg = summaryFn ? summaryFn(records, file.name) : `✓ ${records.length} registros cargados de "${file.name}"`;
+      anyOk = true;
+      let line = `✓ "${file.name}": ${records.length} registros`;
 
       const liveUrl = rawPushOpts && rawPushOpts.getLiveUrl();
       if(isAppsScriptWriteUrl(liveUrl)){
@@ -1294,21 +1312,25 @@ function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpt
           const raw = extractRawRows(workbook, rawPushOpts.requiredHeaders, rawPushOpts.periodoHeader);
           if(raw){
             const result = await pushRawRowsToSheet(liveUrl, raw.headers, raw.rows, rawPushOpts.periodoHeader);
-            msg += ` — ✓ guardado también en la base de datos compartida (${result.escritos} filas${result.reemplazados ? ', ' + result.reemplazados + ' reemplazadas' : ''}).`;
+            line += ` — compartido (${result.escritos} filas${result.reemplazados ? ', ' + result.reemplazados + ' reemplazadas' : ''})`;
           }
         }catch(err){
           console.error('No se pudo guardar en la hoja compartida:', err);
-          msg += ` — ⚠ no se pudo compartir con el equipo (${err.message}). Quedó guardado solo en tu navegador.`;
+          line += ` — ⚠ no se pudo compartir (${err.message})`;
         }
       }
-      setFileStatus(statusId, msg, 'ok');
+      lines.push(line);
     }catch(err){
       console.error(err);
-      setFileStatus(statusId, `✗ ${err.message}`, 'err');
+      lines.push(`✗ "${file.name}": ${err.message}`);
     }
-  };
-  reader.onerror = ()=> setFileStatus(statusId, '✗ Error al leer el archivo.', 'err');
-  reader.readAsArrayBuffer(file);
+  }
+
+  if(anyOk){
+    afterDataChange();
+    if(summaryFn) lines.push(summaryFn());
+  }
+  setFileStatus(statusId, lines.join(' · '), anyOk ? 'ok' : 'err');
 }
 
 function setupDataPanel(){
@@ -1321,11 +1343,10 @@ function setupDataPanel(){
       (records, name)=>{
         ATT = mergeByPeriodo(ATT, records);
         attSourceName = name;
-        afterDataChange();
       },
-      (records, name)=>{
+      ()=>{
         const periods = [...new Set(ATT.map(r=>r.periodo).filter(Boolean))];
-        return `✓ ${records.length} registros de "${name}" — total acumulado: ${ATT.length} registros en ${periods.length} periodo(s)`;
+        return `total acumulado: ${ATT.length} registros en ${periods.length} periodo(s)`;
       },
       { requiredHeaders: ATT_REQUIRED, periodoHeader: 'Periodo académico', getLiveUrl: ()=> sourceConfig.attendanceUrl });
   });
@@ -1334,11 +1355,10 @@ function setupDataPanel(){
       (records, name)=>{
         SAT = mergeByPeriodo(SAT, records);
         satSourceName = name;
-        afterDataChange();
       },
-      (records, name)=>{
+      ()=>{
         const periods = [...new Set(SAT.map(r=>r.periodo).filter(Boolean))];
-        return `✓ ${records.length} registros de "${name}" — total acumulado: ${SAT.length} registros en ${periods.length} periodo(s)`;
+        return `total acumulado: ${SAT.length} registros en ${periods.length} periodo(s)`;
       },
       { requiredHeaders: SAT_REQUIRED, periodoHeader: 'Semestre', getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });

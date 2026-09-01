@@ -43,7 +43,7 @@
     <label>Asistencia y calificaciones · GIE-DCB-FOR-01</label>
     <div class="dp-file">
       <span class="tag">.xlsx</span>
-      <input type="file" id="fileAtt" accept=".xlsx,.xls">
+      <input type="file" id="fileAtt" accept=".xlsx,.xls" multiple>
     </div>
     <div class="dp-file-status" id="attStatus"></div>
   </div>
@@ -51,7 +51,7 @@
     <label>Satisfacción · GIE-DCB-FOR-02</label>
     <div class="dp-file">
       <span class="tag">.xlsx</span>
-      <input type="file" id="fileSat" accept=".xlsx,.xls">
+      <input type="file" id="fileSat" accept=".xlsx,.xls" multiple>
     </div>
     <div class="dp-file-status" id="satStatus"></div>
   </div>
@@ -59,7 +59,7 @@
   <div class="dp-file-status" id="autosaveStatus" style="flex-basis:100%;"></div>
 </div>
 <div class="note" style="background:var(--blue-050);border-bottom:1px solid var(--line);margin:0;padding:6px 24px;">
-  Puedes subir un archivo por cada semestre (con la columna "Periodo académico" / "Semestre" correctamente llenada, ej. "2024-1"): los periodos nuevos se <strong>agregan</strong> al historial y, si vuelves a subir uno ya cargado, se reemplaza sin duplicar. Con 2 o más periodos cargados se habilita la pestaña <strong>Comparativo</strong>. Los cambios se autoguardan en este navegador; "Limpiar información" borra todo para empezar de cero (si hay una fuente en vivo compartida configurada, también la vacía para todo el equipo).
+Sube un archivo por cada semestre (con la columna "Periodo académico" / "Semestre" correctamente llenada, ej. "2024-1") — puedes seleccionar <strong>varios Excel a la vez</strong> (Ctrl/Cmd + clic en el explorador de archivos) y se procesan uno por uno en el orden elegido. Los periodos nuevos se <strong>agregan</strong> al historial y, si vuelves a subir uno ya cargado, se reemplaza sin duplicar. Con 2 o más periodos cargados se habilita la pestaña <strong>Comparativo</strong>. Los cambios se autoguardan en este navegador; "Limpiar información" borra todo para empezar de cero (si hay una fuente en vivo compartida configurada, también la vacía para todo el equipo).
 </div>
 
 <div class="filters" id="filters">

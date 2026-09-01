@@ -426,8 +426,9 @@ Librerías usadas (vía CDN, no hay que instalar nada para ver el dashboard):
   Comparativo histórico por periodo.
 - **Filtros**: Periodo académico (con selector de "todos los periodos"), Facultad,
   Carrera, Sede, Curso.
-- **Carga de Excel** en el navegador (acumulativo por periodo, con reemplazo si repites
-  un periodo ya cargado) — con **autoguardado personal** entre sesiones (ver
+- **Carga de Excel** en el navegador, con selección múltiple (varios archivos a la vez,
+  procesados uno por uno en orden) y acumulativa por periodo, con reemplazo si repites
+  un periodo ya cargado — con **autoguardado personal** entre sesiones (ver
   "Cómo funcionan los datos" para la diferencia entre esto y los datos compartidos por link).
 - **Exportar informe**: genera una vista previa imprimible con la misma estructura del
   informe oficial (memo + gráficos + tablas + conclusiones), con cuadros resumen de
