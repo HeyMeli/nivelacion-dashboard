@@ -47,7 +47,14 @@ async function fetchLiveRecords(url, parseFn){
   if(!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
   if(/^\s*<(!DOCTYPE|html)/i.test(text)) throw new Error('La URL devolvió una página HTML, no datos — revisa que el enlace sea el de exportar/publicar como CSV, y que la hoja esté compartida como "Cualquiera con el enlace".');
-  const workbook = XLSX.read(text, { type: 'string' });
+  // raw:true here (an XLSX.read parse option, NOT the same as sheet_to_json's raw below) turns off
+  // SheetJS's own type-guessing while parsing the CSV text — without it, a plain-text value like
+  // "2026-1" or "2024-1" (a normal periodo/semestre label) gets silently misread as a year-month
+  // date and converted to an Excel serial number (e.g. 46022.99958333333), even though the actual
+  // Google Sheet cell is genuine plain text — this is SheetJS's CSV parser guessing, unrelated to
+  // how the source Excel or the Sheet itself stored the value. Every field becomes a string this
+  // way, which is fine: cleanNum()/parseInt() already coerce numeric strings back to numbers.
+  const workbook = XLSX.read(text, { type: 'string', raw: true });
   const records = parseFn(workbook);
   if(!records.length) throw new Error('La fuente respondió pero no se encontraron registros con el formato esperado.');
   return records;
