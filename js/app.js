@@ -725,14 +725,6 @@ function renderRendimiento(main, rows){
   const avanceObt = sum(participantes.map(r=>r.avanceObt));
   const avanceIdeal = sum(participantes.map(r=>r.avanceIdeal));
   const rendGeneral = avanceIdeal ? (avanceObt/avanceIdeal*7.6) : 0;
-  // avg() ya excluye los null antes de promediar — multiplicar por 100 ANTES del avg() (como
-  // estaba antes) convierte cada fila sin dato de eficacia en 0 (null*100 === 0 en JS), y esos
-  // ceros sí entran al promedio, arrastrándolo hacia abajo o directo a 0% si ninguna fila tiene
-  // el dato. Promediar primero y multiplicar después evita ese problema; si de verdad no hay
-  // ningún dato, se queda en null (fmtPct lo muestra como "—", no como un 0% engañoso).
-  const eficaciaAvg = avg(participantes.map(r=>r.eficacia));
-  const eficaciaPct = eficaciaAvg==null ? null : eficaciaAvg*100;
-  const aprobados = participantes.filter(r=> (r.ec1!=null && r.ec1>=11) || (r.ep!=null && r.ep>=11)).length;
   const participantesActivos = participantes.length; // por matrícula, no por estudiante único
 
   const gaugeRow = el('div',{}); gaugeRow.setAttribute('style','display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
@@ -745,10 +737,6 @@ function renderRendimiento(main, rows){
 
   const kpis = el('div',{class:'grid kpi-row'});
   kpis.appendChild(kpi('Participantes activos en el programa de nivelación', participantesActivos, 'por matrícula, no por estudiante único'));
-  kpis.appendChild(kpi('Eficacia promedio', fmtPct(eficaciaPct)));
-  kpis.appendChild(kpi('Estudiantes con primeras evaluaciones aprobadas', aprobados));
-  kpis.appendChild(kpi('Avance obtenido (total)', fmtNum(avanceObt)));
-  kpis.appendChild(kpi('Avance ideal (total)', fmtNum(avanceIdeal)));
   main.appendChild(kpis);
 
   const g1 = grid('1fr 1fr');
