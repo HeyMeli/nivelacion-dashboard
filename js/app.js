@@ -393,20 +393,19 @@ function donutChart(ctx, labels, data, colors, opts={}){
   });
 }
 
-// responsive:false on purpose: the gauge card overlays its %-label on top of the arc via a fixed
-// -46px negative margin (see .gval in styles.css), which only lines up if the canvas is ALWAYS the
-// same pixel size. With responsive:true inside .gauge-wrap (a flex column with no fixed height),
-// Chart.js resizes the canvas to match its container — but the container's height is itself
-// determined by the canvas's content, a circular dependency that Chart.js can settle at a
-// different height on any redraw (e.g. the resize check it runs on hover), making the number jump.
-// Fixed HTML width/height (below) sidesteps that entirely.
+// Stays responsive (fills whatever width the grid column gives it, same as the other chart
+// types) — only the HEIGHT needs to be pinned, via a fixed-height CSS wrapper (.gauge-canvas-box,
+// same pattern as .chart-wrap), so the -46px negative margin that overlays the %-label on the arc
+// (see .gval in styles.css) always lines up. A hard-fixed WIDTH doesn't work here: it stops the
+// canvas from shrinking inside narrower grid columns, which makes the grid overflow and the gauges
+// overlap each other.
 function gaugeChart(ctx, value, max, color){
   const pct = Math.max(0, Math.min(1, value/max));
   return new Chart(ctx,{
     type:'doughnut',
     data:{ datasets:[{ data:[pct, 1-pct], backgroundColor:[color||BLUE[0], '#E9F0FA'], borderWidth:0 }]},
     options:{
-      responsive:false, cutout:'72%',
+      responsive:true, maintainAspectRatio:false, cutout:'72%',
       rotation:-90, circumference:180,
       plugins:{ legend:{display:false}, tooltip:{enabled:false}, datalabels:{display:false} }
     }
@@ -415,8 +414,10 @@ function gaugeChart(ctx, value, max, color){
 
 function gaugeCard(id, label, value, max, fmt, color){
   const wrap = el('div',{class:'gauge-wrap'});
-  const c = el('canvas',{id, width:'150', height:'110'});
-  wrap.appendChild(c);
+  const box = el('div',{class:'gauge-canvas-box'});
+  const c = el('canvas',{id});
+  box.appendChild(c);
+  wrap.appendChild(box);
   const vEl = el('div',{class:'gval'}, fmt(value));
   const lEl = el('div',{class:'glabel'}, label);
   wrap.appendChild(vEl); wrap.appendChild(lEl);

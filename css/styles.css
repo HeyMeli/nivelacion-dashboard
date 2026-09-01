@@ -164,6 +164,7 @@
   .badge.no{background:#FDEDEC;color:var(--red);}
 
   .gauge-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 0;}
+  .gauge-wrap .gauge-canvas-box{position:relative;width:100%;height:110px;}
   .gauge-wrap .gval{font-size:22px;font-weight:800;color:var(--blue-800);margin-top:-46px;}
   .gauge-wrap .glabel{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px;}
   .gauge-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
