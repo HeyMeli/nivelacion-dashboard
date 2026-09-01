@@ -200,11 +200,23 @@ todo el equipo, sin tocar git (ver "Subir Excel con escritura a la Sheet" más a
 
      var sheetHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
 
+     // Encabezados con salto de línea (ej. "Eficacia\n(%)") no llegan siempre con el mismo texto
+     // exacto: Excel suele guardarlos como \r\n, mientras que la Sheet los guarda como \n y a
+     // veces con un espacio extra alrededor. Sin normalizar, una comparación literal (indexOf)
+     // no los reconoce como la misma columna y esa columna queda sin escribirse — aunque el
+     // Excel sí tenga el dato. Se normaliza igual que normHeader() en el dashboard.
+     function normalizeHeader(h) {
+       return String(h).replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ').trim();
+     }
+     var sheetHeadersNorm = sheetHeaders.map(normalizeHeader);
+     var incomingHeadersNorm = incomingHeaders.map(normalizeHeader);
+     var periodoHeaderNorm = normalizeHeader(periodoHeader);
+
      // Mapea cada encabezado del Excel a la columna correspondiente EN LA HOJA por nombre (no
      // por posición), así el orden de columnas no tiene que ser idéntico.
-     var colForIncomingIdx = incomingHeaders.map(function (h) { return sheetHeaders.indexOf(String(h)); });
-     var periodoColInSheet = sheetHeaders.indexOf(periodoHeader);
-     var periodoIncomingIdx = incomingHeaders.indexOf(periodoHeader);
+     var colForIncomingIdx = incomingHeadersNorm.map(function (h) { return sheetHeadersNorm.indexOf(h); });
+     var periodoColInSheet = sheetHeadersNorm.indexOf(periodoHeaderNorm);
+     var periodoIncomingIdx = incomingHeadersNorm.indexOf(periodoHeaderNorm);
 
      // Periodos que trae este Excel: sus filas existentes en la hoja se reemplazan por completo.
      var incomingPeriods = {};
