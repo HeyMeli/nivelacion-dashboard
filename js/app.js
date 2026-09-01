@@ -725,7 +725,13 @@ function renderRendimiento(main, rows){
   const avanceObt = sum(participantes.map(r=>r.avanceObt));
   const avanceIdeal = sum(participantes.map(r=>r.avanceIdeal));
   const rendGeneral = avanceIdeal ? (avanceObt/avanceIdeal*7.6) : 0;
-  const eficaciaPct = avg(participantes.map(r=>r.eficacia*100));
+  // avg() ya excluye los null antes de promediar — multiplicar por 100 ANTES del avg() (como
+  // estaba antes) convierte cada fila sin dato de eficacia en 0 (null*100 === 0 en JS), y esos
+  // ceros sí entran al promedio, arrastrándolo hacia abajo o directo a 0% si ninguna fila tiene
+  // el dato. Promediar primero y multiplicar después evita ese problema; si de verdad no hay
+  // ningún dato, se queda en null (fmtPct lo muestra como "—", no como un 0% engañoso).
+  const eficaciaAvg = avg(participantes.map(r=>r.eficacia));
+  const eficaciaPct = eficaciaAvg==null ? null : eficaciaAvg*100;
   const aprobados = participantes.filter(r=> (r.ec1!=null && r.ec1>=11) || (r.ep!=null && r.ep>=11)).length;
   const participantesActivos = participantes.length; // por matrícula, no por estudiante único
 
@@ -773,7 +779,7 @@ function renderRendimiento(main, rows){
       el('td',{}, String(r.id)), el('td',{}, r.nombre||''), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
       el('td',{}, fmtNum(r.ed,1)), el('td',{}, fmtNum(r.ec1,1)), el('td',{}, fmtNum(r.ep,1)),
       el('td',{}, fmtNum(r.avanceObt,2)), el('td',{}, fmtNum(r.avanceIdeal,2)),
-      el('td',{}, fmtPct((r.eficacia||0)*100))
+      el('td',{}, fmtPct(r.eficacia==null ? null : r.eficacia*100))
     ));
   });
   table.appendChild(tbody); tscroll.appendChild(table);

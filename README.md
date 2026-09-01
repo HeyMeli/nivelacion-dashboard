@@ -152,7 +152,11 @@ todo el equipo, sin tocar git (ver "Subir Excel con escritura a la Sheet" más a
            return Utilities.formatDate(cell, Session.getScriptTimeZone(), 'yyyy-MM-dd');
          }
          var s = String(cell);
-         return (s.indexOf(',') > -1 || s.indexOf('"') > -1) ? '"' + s.replace(/"/g,'""') + '"' : s;
+         // También hay que escapar saltos de línea (\n / \r) — si no, un encabezado como
+         // "Eficacia\n(%)" corta la fila del encabezado en dos partes en el CSV, y la columna
+         // "Eficacia" deja de coincidir con ningún nombre esperado (queda vacía en todo el
+         // dashboard cuando se lee desde esta fuente en vivo).
+         return (s.indexOf(',') > -1 || s.indexOf('"') > -1 || s.indexOf('\n') > -1 || s.indexOf('\r') > -1) ? '"' + s.replace(/"/g,'""') + '"' : s;
        }).join(',');
      }).join('\n');
      return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
