@@ -555,9 +555,11 @@ function renderParticipantes(main, rows){
   const matriculas = rows.length;
   const estudiantesUnicos = new Set(rows.map(r=>r.id)).size;
   const participantesRows = rows.filter(r=>r.condicion==='Participante');
-  // A pedido explícito: "Participaron"/"No participaron" cuentan MATRÍCULAS (filas), no
-  // estudiantes únicos — un estudiante en 2 cursos cuenta 2 veces aquí. Solo en esta pestaña;
-  // el resto del dashboard y el informe exportado siguen contando personas únicas por ID.
+  // A pedido explícito: toda cifra de "participaron" en el dashboard cuenta MATRÍCULAS
+  // (filas), no estudiantes únicos — un estudiante en 2 cursos cuenta 2 veces. "Nro de
+  // estudiantes" es la única excepción a propósito (headcount real, no de participación).
+  // El informe exportado (computeReportData) sigue aparte, contando personas únicas, para
+  // no romper el % de participación (ver esa función).
   const estudiantesParticipantes = participantesRows.length;
   const estudiantesNoPart = matriculas - estudiantesParticipantes;
   const retirados = computeRetirados(rows);
@@ -579,7 +581,9 @@ function renderParticipantes(main, rows){
   main.appendChild(grid1);
 
   const carreraMap = groupBy(participantesRows, 'carrera');
-  const topCarreras = topN(carreraMap, 15, v=> new Set(v.map(r=>r.id)).size);
+  // Por matrícula, no por estudiante único — igual que las tarjetas KPI de arriba (ver nota junto a
+  // estudiantesParticipantes).
+  const topCarreras = topN(carreraMap, 15, v=> v.length);
   main.appendChild(chartCard('Participación de estudiantes por carrera (top 15)', 'p_carrera', {tall:true}));
 
   // table
@@ -609,7 +613,8 @@ function renderParticipantes(main, rows){
   requestAnimationFrame(()=>{
     const cursoMap = groupBy(rows, 'curso');
     const cursoLabels = [...cursoMap.keys()];
-    const cursoVals = cursoLabels.map(k=> new Set(cursoMap.get(k).filter(r=>r.condicion==='Participante').map(r=>r.id)).size);
+    // Por matrícula, no por estudiante único — igual que las tarjetas KPI y el resto de esta pestaña.
+    const cursoVals = cursoLabels.map(k=> cursoMap.get(k).filter(r=>r.condicion==='Participante').length);
     charts.p_curso = barChart(document.getElementById('p_curso'), cursoLabels, cursoVals, {color:BLUE[0]});
 
     charts.p_condicion = donutChart(document.getElementById('p_condicion'),
@@ -631,7 +636,7 @@ function renderAsistencia(main, rows){
 
   const kpis = el('div',{class:'grid kpi-row'});
   kpis.appendChild(kpi('Asistencia general', fmtPct(asistGeneral)));
-  kpis.appendChild(kpi('Estudiantes participantes', new Set(participantes.map(r=>r.id)).size));
+  kpis.appendChild(kpi('Estudiantes participantes', participantes.length, 'por matrícula, no por estudiante único'));
   kpis.appendChild(kpi('Estudiantes con condición de retirado', retirados));
   main.appendChild(kpis);
   main.appendChild(el('div',{class:'note'}, '* "Estudiantes con condición de retirado" requiere un campo de estado que el formato actual no registra; se muestra en 0 hasta que esa columna esté disponible.'));
@@ -722,7 +727,7 @@ function renderRendimiento(main, rows){
   const rendGeneral = avanceIdeal ? (avanceObt/avanceIdeal*7.6) : 0;
   const eficaciaPct = avg(participantes.map(r=>r.eficacia*100));
   const aprobados = participantes.filter(r=> (r.ec1!=null && r.ec1>=11) || (r.ep!=null && r.ep>=11)).length;
-  const participantesActivos = new Set(participantes.map(r=>r.id)).size;
+  const participantesActivos = participantes.length; // por matrícula, no por estudiante único
 
   const gaugeRow = el('div',{}); gaugeRow.setAttribute('style','display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
   const gcard1 = card('Rendimiento general'); gcard1.querySelector('.body').appendChild(gaugeCard('g_rend','sobre 7.60', rendGeneral, 7.6, v=>v.toFixed(2), BLUE[0]));
@@ -733,7 +738,7 @@ function renderRendimiento(main, rows){
   main.appendChild(gaugeRow);
 
   const kpis = el('div',{class:'grid kpi-row'});
-  kpis.appendChild(kpi('Participantes activos en el programa de nivelación', participantesActivos));
+  kpis.appendChild(kpi('Participantes activos en el programa de nivelación', participantesActivos, 'por matrícula, no por estudiante único'));
   kpis.appendChild(kpi('Eficacia promedio', fmtPct(eficaciaPct)));
   kpis.appendChild(kpi('Estudiantes con primeras evaluaciones aprobadas', aprobados));
   kpis.appendChild(kpi('Avance obtenido (total)', fmtNum(avanceObt)));
@@ -956,8 +961,9 @@ function renderComparativo(main, rows){
   }
 
   requestAnimationFrame(()=>{
+    // Por matrícula, no por estudiante único — igual que el resto del dashboard.
     const partVals = periods.map(p =>
-      new Set(rows.filter(r=>r.periodo===p && r.condicion==='Participante').map(r=>r.id)).size);
+      rows.filter(r=>r.periodo===p && r.condicion==='Participante').length);
     charts.cp_participantes = lineChart(document.getElementById('cp_participantes'), periods,
       [{label:'Participantes', data: partVals}]);
 
@@ -971,7 +977,7 @@ function renderComparativo(main, rows){
     const cursos = [...new Set(rows.map(r=>r.curso).filter(Boolean))];
     const cpCursoPart = cursos.map((c,i)=>({
       label:c, color: BLUE[i%BLUE.length],
-      data: periods.map(p => new Set(rows.filter(r=>r.periodo===p && r.curso===c && r.condicion==='Participante').map(r=>r.id)).size)
+      data: periods.map(p => rows.filter(r=>r.periodo===p && r.curso===c && r.condicion==='Participante').length)
     }));
     charts.cp_curso_part = lineChart(document.getElementById('cp_curso_part'), periods, cpCursoPart);
 
@@ -1616,8 +1622,12 @@ function computeReportData(periodo){
   const participantesRows = scoped.filter(r=>r.condicion==='Participante');
 
   const estudiantesUnicos = new Set(scoped.map(r=>r.id)).size;
-  const estudiantesParticipantes = new Set(participantesRows.map(r=>r.id)).size;
-  const pctParticipacion = estudiantesUnicos ? (estudiantesParticipantes/estudiantesUnicos*100) : 0;
+  // Por matrícula, no por estudiante único — igual que el resto del dashboard (ver
+  // renderParticipantes). El % usa scoped.length (matrículas totales) como base, no
+  // estudiantesUnicos, para que nunca supere 100% (un estudiante en 2 cursos ya no
+  // infla el numerador sin inflar también el denominador).
+  const estudiantesParticipantes = participantesRows.length;
+  const pctParticipacion = scoped.length ? (estudiantesParticipantes/scoped.length*100) : 0;
 
   // Matriculados / Participación matrices: rows = curso, cols = sede (+ Total)
   function matrix(rowsSubset, uniqueBy){
@@ -1634,7 +1644,7 @@ function computeReportData(periodo){
     return { table, totalRow };
   }
   const matriculadosMx = matrix(scoped, null);
-  const participacionMx = matrix(participantesRows, 'id');
+  const participacionMx = matrix(participantesRows, null); // por matrícula, no por estudiante único
 
   // % Asistencia by curso
   const asistenciaByCurso = cursos.map(c=>{
