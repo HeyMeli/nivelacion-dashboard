@@ -134,7 +134,10 @@ de subirlo al repo — queda guardado solo en tu navegador para que lo pruebes p
 ### Opción 2 — Apps Script Web App (más confiable, recomendada si la Opción 1 falla)
 
 Esto crea una mini-API propia a partir de tu Google Sheet, sin escribir código real —
-solo pegar este script una vez:
+solo pegar este script una vez. Además de servir la hoja como CSV (`doGet`), incluye
+`doPost`, que permite que el botón de **subir Excel** del dashboard guarde los datos
+directamente en esta Google Sheet — así se convierte en la base de datos compartida de
+todo el equipo, sin tocar git (ver "Subir Excel con escritura a la Sheet" más abajo).
 
 1. En tu Google Sheet: **Extensiones → Apps Script**.
 2. Borra el contenido y pega esto:
@@ -154,11 +157,86 @@ solo pegar este script una vez:
      }).join('\n');
      return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
    }
+
+   // Recibe las filas que sube alguien desde el dashboard (botón "Seleccionar archivo") y las
+   // guarda en esta Google Sheet como base de datos compartida: si el periodo que trae el Excel
+   // ya existía, reemplaza esas filas (no las duplica); si es nuevo, las agrega al final. Misma
+   // regla que usa el dashboard localmente y scripts/build_data.py.
+   function doPost(e) {
+     var body = JSON.parse(e.postData.contents);
+     // El nombre de pestaña viaja como "?sheet=..." en la URL (igual que en doGet), no dentro
+     // del body — por eso se lee de e.parameter primero.
+     var sheetName = (e.parameter && e.parameter.sheet) || body.sheet || SpreadsheetApp.getActiveSpreadsheet().getSheets()[0].getName();
+     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+     if (!sheet) {
+       return jsonOut({ ok: false, error: 'No existe la pestaña "' + sheetName + '" en esta hoja de cálculo.' });
+     }
+
+     var incomingHeaders = body.headers || [];
+     var incomingRows = body.rows || [];
+     var periodoHeader = body.periodoHeader || 'Periodo académico';
+
+     var lastRow = sheet.getLastRow();
+     var lastCol = sheet.getLastColumn();
+     if (lastRow === 0 || lastCol === 0) {
+       return jsonOut({ ok: false, error: 'La pestaña "' + sheetName + '" está vacía — pégale primero la fila de encabezados oficiales.' });
+     }
+
+     var sheetHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+
+     // Mapea cada encabezado del Excel a la columna correspondiente EN LA HOJA por nombre (no
+     // por posición), así el orden de columnas no tiene que ser idéntico.
+     var colForIncomingIdx = incomingHeaders.map(function (h) { return sheetHeaders.indexOf(String(h)); });
+     var periodoColInSheet = sheetHeaders.indexOf(periodoHeader);
+     var periodoIncomingIdx = incomingHeaders.indexOf(periodoHeader);
+
+     // Periodos que trae este Excel: sus filas existentes en la hoja se reemplazan por completo.
+     var incomingPeriods = {};
+     if (periodoIncomingIdx !== -1) {
+       incomingRows.forEach(function (row) {
+         var p = row[periodoIncomingIdx];
+         if (p !== null && p !== '') incomingPeriods[String(p)] = true;
+       });
+     }
+
+     // Borra filas existentes del/los periodo(s) que se reemplazan, de abajo hacia arriba para
+     // no desfasar los números de fila mientras se borra.
+     var deleted = 0;
+     if (periodoColInSheet !== -1 && Object.keys(incomingPeriods).length && lastRow > 1) {
+       var dataRows = sheet.getRange(2, periodoColInSheet + 1, lastRow - 1, 1).getValues();
+       for (var i = dataRows.length - 1; i >= 0; i--) {
+         var val = dataRows[i][0];
+         if (val !== null && val !== '' && incomingPeriods[String(val)]) {
+           sheet.deleteRow(i + 2);
+           deleted++;
+         }
+       }
+     }
+
+     // Arma las filas nuevas en el orden de columnas DE LA HOJA y las agrega al final.
+     if (incomingRows.length) {
+       var outRows = incomingRows.map(function (row) {
+         var out = new Array(sheetHeaders.length).fill('');
+         colForIncomingIdx.forEach(function (sheetIdx, incomingIdx) {
+           if (sheetIdx !== -1) out[sheetIdx] = row[incomingIdx];
+         });
+         return out;
+       });
+       sheet.getRange(sheet.getLastRow() + 1, 1, outRows.length, sheetHeaders.length).setValues(outRows);
+     }
+
+     return jsonOut({ ok: true, escritos: incomingRows.length, reemplazados: deleted, periodos: Object.keys(incomingPeriods) });
+   }
+
+   function jsonOut(obj) {
+     return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+   }
    ```
 3. Guarda (ícono de disco), ponle un nombre al proyecto.
 4. **Implementar → Nueva implementación** → tipo **Aplicación web**.
 5. Configura: **Ejecutar como: Yo** / **Quién tiene acceso: Cualquier usuario** → **Implementar**.
-6. Autoriza los permisos que pida (es tu propio script, sobre tu propia hoja).
+6. Autoriza los permisos que pida (es tu propio script, sobre tu propia hoja) — ahora te
+   pedirá permiso también para **editar** la hoja (por el `doPost`), no solo leerla.
 7. Copia la URL que te da (termina en `/exec`). Si tu hoja tiene varias pestañas, agrégale
    `?sheet=NombreDeLaPestaña` al final (ej. `.../exec?sheet=Asistencia`).
 8. Pega esa URL en el dashboard y prueba la conexión.
@@ -166,6 +244,24 @@ solo pegar este script una vez:
 Cada vez que edites la Google Sheet, ambos métodos reflejan el cambio de inmediato — no
 hace falta volver a implementar el script ni republicar, solo recargar el dashboard (o
 usar el botón 🔄).
+
+⚠️ Cada vez que **modifiques el código** del script (no la hoja, el código en sí) sí hace
+falta volver a **Implementar → Gestionar implementaciones → ✏️ editar → Nueva versión →
+Implementar**, para que la URL `/exec` sirva la versión nueva.
+
+### Subir Excel con escritura a la Sheet
+
+Si la URL configurada como fuente en vivo es de Apps Script (Opción 2, termina en `/exec`),
+el botón de **subir Excel** dentro del dashboard hace dos cosas a la vez: carga los datos en
+tu navegador (como siempre) **y** los envía por `doPost` para que se guarden en la Google
+Sheet — el equipo entero los ve la próxima vez que abra el link, sin tocar git. Si la fuente
+configurada es la Opción 1 (CSV publicado, de solo lectura) o no hay ninguna configurada, la
+subida se comporta como antes: solo queda en tu navegador.
+
+El mensaje junto al archivo subido indica si se pudo compartir (`✓ guardado también en la
+base de datos compartida`) o si falló y quedó solo local (`⚠ no se pudo compartir...`) — en
+ese caso revisa que la implementación de Apps Script siga activa y con "Cualquier usuario"
+como acceso.
 
 ### Si prefieres no usar una fuente en vivo
 
@@ -186,11 +282,12 @@ botón de subir Excel *dentro* del dashboard ya abierto: eso queda guardado solo
 navegador de esa persona (autoguardado), como respaldo personal para no perder su
 trabajo entre sesiones — pero el resto del equipo, al entrar por el link, no lo ve.
 
-|                                                              | ¿Todo el equipo lo ve por el link? |
-|--------------------------------------------------------------|:---:|
-| Subir un Excel con el panel *dentro* del dashboard ya abierto | ❌ No (solo en tu navegador) |
-| Reemplazar `data/*.json` en el repositorio de GitHub          | ✅ Sí, para todos |
-| Configurar una fuente en vivo (sección anterior)              | ✅ Sí, para todos — y sin volver a tocar git |
+|                                                                        | ¿Todo el equipo lo ve por el link? |
+|------------------------------------------------------------------------|:---:|
+| Subir un Excel con el panel *dentro* del dashboard (sin fuente en vivo, o con Opción 1 CSV) | ❌ No (solo en tu navegador) |
+| Subir un Excel con el panel, con Apps Script (Opción 2) configurado    | ✅ Sí, para todos — se escribe en la Google Sheet vía `doPost` |
+| Reemplazar `data/*.json` en el repositorio de GitHub                  | ✅ Sí, para todos |
+| Configurar una fuente en vivo (sección anterior)                      | ✅ Sí, para todos — y sin volver a tocar git |
 
 Entonces, para que aparezcan datos nuevos en la versión que ve todo el equipo, hay que
 actualizar los archivos del repositorio. Dos formas de hacerlo, de más simple a más

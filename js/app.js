@@ -55,6 +55,48 @@ async function fetchLiveRecords(url, parseFn){
   return records;
 }
 
+// A live source URL is writable only when it's an Apps Script Web App (README Opción 2) — a
+// Google Sheet "publicado como CSV" (Opción 1) is read-only, so uploads stay browser-local for it.
+function isAppsScriptWriteUrl(url){
+  return /\/exec(\?|$)/.test(url || '');
+}
+
+// Re-scans an already-parsed workbook for its raw header row + data rows (same header
+// detection parseAttendanceWorkbook/parseSatisfactionWorkbook use), to forward as-is to the
+// Apps Script doPost endpoint — kept separate so those two keep returning normalized records.
+function extractRawRows(workbook, requiredHeaders){
+  const matrix = sheetToMatrix(workbook, ['REGISTRO']);
+  const headerIdx = findHeaderRow(matrix, requiredHeaders);
+  if(headerIdx === -1) return null;
+  const headers = matrix[headerIdx];
+  const rows = matrix.slice(headerIdx + 1).filter(r => r && r.some(c => c!=null && c!==''));
+  return { headers, rows };
+}
+
+// Sends the raw header row + data rows straight from an uploaded Excel to the Apps Script
+// doPost endpoint, so the Google Sheet becomes the shared "database" every teammate's live
+// source reads from — same "el periodo nuevo reemplaza al viejo" rule as mergeByPeriodo() /
+// scripts/build_data.py, just applied on the sheet by the script itself.
+async function pushRawRowsToSheet(url, rawHeaders, rawRows, periodoHeader){
+  const sep = url.includes('?') ? '&' : '?';
+  let res;
+  try{
+    res = await fetch(url + sep + '_ts=' + Date.now(), {
+      method: 'POST',
+      // text/plain avoids a CORS preflight (Apps Script Web Apps don't handle OPTIONS); the
+      // body is still valid JSON and doPost() parses e.postData.contents as such regardless.
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ headers: rawHeaders, rows: rawRows, periodoHeader })
+    });
+  }catch(err){
+    throw new Error('No se pudo conectar con la hoja compartida (posible bloqueo de red).');
+  }
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if(!json.ok) throw new Error(json.error || 'La hoja rechazó los datos.');
+  return json;
+}
+
 async function loadBaseData(){
   sourceConfig = await loadSourceConfig();
   liveAttOk = false; liveSatOk = false;
@@ -1158,19 +1200,36 @@ function afterDataChange(){
   saveSnapshot();
 }
 
-function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn){
+// rawPushOpts (optional): { requiredHeaders, periodoHeader, getLiveUrl } — when getLiveUrl()
+// resolves to an Apps Script Web App URL, also forwards the raw sheet rows to it via doPost so
+// the upload becomes the shared database instead of staying only in this browser's autosave.
+function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpts){
   const file = inputEl.files && inputEl.files[0];
   if(!file) return;
   setFileStatus(statusId, `Leyendo "${file.name}"…`, '');
   const reader = new FileReader();
-  reader.onload = (ev)=>{
+  reader.onload = async (ev)=>{
     try{
       const data = new Uint8Array(ev.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
       const records = parseFn(workbook);
       if(!records.length) throw new Error('El archivo no contiene registros con datos.');
       onSuccess(records, file.name);
-      const msg = summaryFn ? summaryFn(records, file.name) : `✓ ${records.length} registros cargados de "${file.name}"`;
+      let msg = summaryFn ? summaryFn(records, file.name) : `✓ ${records.length} registros cargados de "${file.name}"`;
+
+      const liveUrl = rawPushOpts && rawPushOpts.getLiveUrl();
+      if(isAppsScriptWriteUrl(liveUrl)){
+        try{
+          const raw = extractRawRows(workbook, rawPushOpts.requiredHeaders);
+          if(raw){
+            const result = await pushRawRowsToSheet(liveUrl, raw.headers, raw.rows, rawPushOpts.periodoHeader);
+            msg += ` — ✓ guardado también en la base de datos compartida (${result.escritos} filas${result.reemplazados ? ', ' + result.reemplazados + ' reemplazadas' : ''}).`;
+          }
+        }catch(err){
+          console.error('No se pudo guardar en la hoja compartida:', err);
+          msg += ` — ⚠ no se pudo compartir con el equipo (${err.message}). Quedó guardado solo en tu navegador.`;
+        }
+      }
       setFileStatus(statusId, msg, 'ok');
     }catch(err){
       console.error(err);
@@ -1196,7 +1255,8 @@ function setupDataPanel(){
       (records, name)=>{
         const periods = [...new Set(ATT.map(r=>r.periodo).filter(Boolean))];
         return `✓ ${records.length} registros de "${name}" — total acumulado: ${ATT.length} registros en ${periods.length} periodo(s)`;
-      });
+      },
+      { requiredHeaders: ATT_REQUIRED, periodoHeader: 'Periodo académico', getLiveUrl: ()=> sourceConfig.attendanceUrl });
   });
   fileSat.addEventListener('change', ()=>{
     handleFile(fileSat, 'satStatus', parseSatisfactionWorkbook,
@@ -1208,7 +1268,8 @@ function setupDataPanel(){
       (records, name)=>{
         const periods = [...new Set(SAT.map(r=>r.periodo).filter(Boolean))];
         return `✓ ${records.length} registros de "${name}" — total acumulado: ${SAT.length} registros en ${periods.length} periodo(s)`;
-      });
+      },
+      { requiredHeaders: SAT_REQUIRED, periodoHeader: 'Semestre', getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });
   btnRestore.addEventListener('click', ()=>{
     ATT = JSON.parse(JSON.stringify(ORIGINAL_ATT));
