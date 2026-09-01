@@ -8,8 +8,31 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
+
+<!-- Acceso "prototipo": filtro suave, no seguridad real (sitio estático, sin backend) —
+     ver README para el detalle. Se muestra hasta que se ingrese la clave correcta. -->
+<div class="auth-overlay" id="authOverlay">
+  <form class="auth-card" id="authForm">
+    <div class="auth-logo">UCSUR</div>
+    <h2>Programa de Nivelación</h2>
+    <p class="auth-sub">Acceso restringido — prototipo</p>
+    <div class="modal-field">
+      <label>Usuario</label>
+      <input type="text" id="authUser" autocomplete="username" required>
+    </div>
+    <div class="modal-field">
+      <label>Contraseña</label>
+      <input type="password" id="authPass" autocomplete="current-password" required>
+    </div>
+    <div class="auth-error" id="authError" style="display:none;"></div>
+    <button class="btn-primary" type="submit">Ingresar</button>
+  </form>
+</div>
+
+<div class="app-shell" id="appShell">
 
 <header class="top">
   <div class="brand">
@@ -179,6 +202,8 @@ Sube un archivo por cada semestre (con la columna "Periodo académico" / "Semest
 </div>
 
 <footer class="foot">Dashboard del Programa de Nivelación · Formatos GIE-DCB-FOR-01 (asistencia/notas) y GIE-DCB-FOR-02 (satisfacción)</footer>
+
+</div><!-- /#appShell -->
 
 <script src="js/app.js"></script>
 </body>

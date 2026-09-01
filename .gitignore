@@ -14,3 +14,6 @@ Thumbs.db
 
 # Secrets
 .env
+
+# Informes oficiales (contienen datos de estudiantes) — locales, nunca al repo público
+informes-oficiales/

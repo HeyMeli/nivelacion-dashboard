@@ -393,6 +393,34 @@ Excel con la columna ya en formato texto.
 
 ---
 
+## Acceso al dashboard (prototipo)
+
+Antes de entrar, el dashboard pide un usuario y contraseña únicos (no hay cuentas por
+persona). Esto es un **filtro suave, no seguridad real** — como el sitio no tiene
+backend, cualquiera con conocimientos técnicos puede saltárselo (leyendo `js/app.js` o
+pidiendo `data/attendance.json` / `data/satisfaction.json` directo por URL). Solo evita
+que alguien sin la clave entre por la pantalla normal del link.
+
+Una vez ingresada la clave correcta, queda guardada en ese navegador (no hay que volver
+a escribirla cada vez que se abre el link, solo si se borran los datos del sitio).
+
+**Para cambiar la contraseña:**
+1. Abre la consola del navegador (F12) en cualquier página y corre:
+   ```js
+   crypto.subtle.digest('SHA-256', new TextEncoder().encode('tu-contraseña-nueva'))
+     .then(b => console.log([...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')))
+   ```
+2. Copia el texto largo que imprime (el hash) y reemplázalo en `js/app.js`, en la
+   constante `AUTH_PASS_HASH` (sección `AUTH GATE` cerca del inicio del archivo). Cambia
+   también `AUTH_USER` si quieres otro usuario.
+3. Actualiza el archivo `.env` local (no se sube a git) con la contraseña real en texto
+   plano, solo para que quede anotada — el navegador nunca lee ese archivo.
+4. `git add`/`commit`/`push` de `js/app.js` como cualquier otro cambio.
+
+Las credenciales actuales están en el `.env` local del proyecto.
+
+---
+
 ## Estructura del proyecto
 
 ```
@@ -410,13 +438,16 @@ nivelacion-dashboard/
 ├── scripts/
 │   ├── build_data.py         # Regenera data/*.json a partir de nuevos Excel oficiales
 │   └── publish_data.sh       # Atajo: build_data.py + git add/commit/push en un paso
+├── .env                       # Credenciales de acceso en texto plano — LOCAL, no se sube a git
+├── informes-oficiales/        # Informes oficiales (PDF) para validar indicadores — LOCAL, no se sube a git
 └── README.md
 ```
 
 Librerías usadas (vía CDN, no hay que instalar nada para ver el dashboard):
 [Chart.js](https://www.chartjs.org/) 4.4.4,
 [chartjs-plugin-datalabels](https://chartjs-plugin-datalabels.netlify.app/) 2.2.0,
-[SheetJS/xlsx](https://sheetjs.com/) 0.18.5.
+[SheetJS/xlsx](https://sheetjs.com/) 0.18.5,
+[html2canvas](https://html2canvas.hertzen.com/) 1.4.1 (capturas de pantalla para el informe).
 
 ---
 
@@ -435,11 +466,14 @@ Librerías usadas (vía CDN, no hay que instalar nada para ver el dashboard):
   referencia y campos editables para escribir tus propias conclusiones, recomendaciones,
   y los datos de "Para" / "De" (nombre y cargo) antes de guardarlo como PDF. Incluye
   imágenes reales de los gráficos (participación, asistencia, rendimiento, satisfacción),
-  igual que las capturas de dashboard del informe original.
+  igual que las capturas de dashboard del informe original, y un anexo final con capturas
+  de pantalla completas de las 4 pestañas del dashboard tal como se ven en ese momento.
 - **Limpiar información**: borra lo cargado en este navegador y, si hay una fuente en vivo
   de Apps Script configurada, también vacía la base de datos compartida (con confirmación).
 - **Fuente de datos en vivo** (opcional): conecta una Google Sheet publicada para que el
   equipo vea los mismos datos por el link sin necesidad de git — ver "Base de datos en vivo".
+- **Acceso con clave** (prototipo): pantalla de login antes de entrar al dashboard — ver
+  "Acceso al dashboard (prototipo)" más abajo para cómo cambiar el usuario/contraseña.
 
 ---
 

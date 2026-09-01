@@ -166,6 +166,57 @@ Chart.defaults.font.size = 11;
 Chart.defaults.color = '#5B7089';
 Chart.register(ChartDataLabels);
 
+// ============ AUTH GATE (prototipo, NO es seguridad real) ============
+// Sitio 100% estático, sin backend: esto solo oculta la interfaz de quien no tenga la
+// clave — cualquiera con conocimientos técnicos puede saltárselo leyendo este archivo o
+// pidiendo data/*.json directo por URL. Sirve como filtro suave para el prototipo, no
+// como control de acceso real (ver README).
+const AUTH_KEY = 'nivelacion_auth_ok';
+const AUTH_USER = 'equipo.dacb';
+// Hash SHA-256 de la contraseña (no la contraseña en sí — ver .env local, que no se sube
+// a git, para la contraseña real en texto plano). Para generar el hash de una nueva
+// contraseña, corre esto en la consola del navegador:
+//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('tu-contraseña-nueva'))
+//     .then(b => console.log([...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')))
+const AUTH_PASS_HASH = 'b5853e5498434b34d459d7983dd71bf90e2108c3eb60d9eccfcabff7339a1d0a';
+
+async function sha256Hex(str){
+  if(!window.crypto || !window.crypto.subtle) return str; // fallback en contexto inseguro (ej. file://)
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function grantAccess(){
+  try{ localStorage.setItem(AUTH_KEY, '1'); }catch(err){ /* modo privado, etc. — igual deja pasar en esta pestaña */ }
+  document.body.classList.add('authed');
+}
+
+function setupAuthGate(){
+  const form = document.getElementById('authForm');
+  const errorEl = document.getElementById('authError');
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    errorEl.style.display = 'none';
+    const user = document.getElementById('authUser').value.trim();
+    const pass = document.getElementById('authPass').value;
+    const hash = await sha256Hex(pass);
+    if(user === AUTH_USER && hash === AUTH_PASS_HASH){
+      grantAccess();
+      initApp();
+    } else {
+      errorEl.textContent = 'Usuario o contraseña incorrectos.';
+      errorEl.style.display = 'block';
+    }
+  });
+}
+
+function boot(){
+  let ok = false;
+  try{ ok = localStorage.getItem(AUTH_KEY) === '1'; }catch(err){ /* ignorar */ }
+  if(ok){ document.body.classList.add('authed'); initApp(); }
+  else { setupAuthGate(); }
+}
+
 // ============ STATE ============
 const state = { periodo: '', facultad: '', carrera: '', sede: '', curso: '' };
 let charts = {}; // registry to destroy on re-render
@@ -1430,6 +1481,52 @@ function setupDataPanel(){
 
 function aprobadoFlag(r){ return (r.ec1!=null && r.ec1>=11) || (r.ep!=null && r.ep>=11); }
 
+function nextFrame(){ return new Promise(r => requestAnimationFrame(r)); }
+
+// Cycles currentPage/state.periodo through the 4 report tabs on the LIVE dashboard (reusing the
+// exact same render() pipeline the user sees), screenshots each fully-rendered #main via
+// html2canvas, then restores the original tab/periodo/animation setting — even if a capture fails
+// partway through (the "finally" below), so the live dashboard is never left stuck mid-switch.
+// periodo is forced during the capture so the screenshots match the SAME period as the rest of
+// the report, even if "Todos los periodos" is selected on the live dashboard right now.
+async function captureTabScreenshots(periodo){
+  const TABS = [
+    { key:'participantes', label:'Participantes' },
+    { key:'asistencia',    label:'Asistencia' },
+    { key:'rendimiento',   label:'Rendimiento' },
+    { key:'satisfaccion',  label:'Satisfacción' }
+  ];
+  const savedPage = currentPage;
+  const savedPeriodo = state.periodo;
+  const savedAnimation = Chart.defaults.animation;
+  const main = document.getElementById('main');
+  const images = {};
+
+  Chart.defaults.animation = false;
+  state.periodo = periodo;
+  window.scrollTo(0, 0);
+
+  try{
+    for(const tab of TABS){
+      currentPage = tab.key;
+      render();
+      await nextFrame(); await nextFrame(); // deja que Chart.js termine su paso de layout + pintado
+      try{
+        const canvas = await html2canvas(main, { scale: 1.5, backgroundColor: '#EEF3FA', logging: false, useCORS: true });
+        images['shot_' + tab.key] = canvas.toDataURL('image/jpeg', 0.85);
+      }catch(err){
+        console.error('No se pudo capturar la pestaña "'+tab.key+'":', err);
+      }
+    }
+  } finally {
+    currentPage = savedPage;
+    state.periodo = savedPeriodo;
+    Chart.defaults.animation = savedAnimation;
+    render();
+  }
+  return images;
+}
+
 // Renders a chart on a temporary, off-screen canvas using the SAME barChart/donutChart/lineChart
 // helpers the live dashboard uses (so styling matches). Chart.js schedules its actual pixel
 // painting through a shared requestAnimationFrame loop even with animation disabled, so capturing
@@ -1687,6 +1784,10 @@ function buildReportHTML(d, customText, chartImages){
   .report-chart{ max-width:100%; border:1px solid #B9C9DC; border-radius:4px; background:#fff; }
   .chart-row .report-chart{ flex:1 1 260px; max-width:340px; }
   .chart-row.single .report-chart{ max-width:380px; }
+  .anexos-grid{ display:flex; flex-direction:column; gap:18px; }
+  .anexo-item{ page-break-inside:avoid; break-inside:avoid; }
+  .anexo-item h3{ text-decoration:none; }
+  .anexo-item .report-chart{ max-width:100%; }
   .sign{ margin-top:60px; text-align:center; }
   .sign .line{ border-top:1px solid #16283F; width:280px; margin:0 auto 4px; padding-top:6px; }
   ul{ margin:6px 0; padding-left:22px; }
@@ -1749,6 +1850,17 @@ function buildReportHTML(d, customText, chartImages){
 
   <h3>Acciones que se tomarán en DACB para el siguiente ciclo:</h3>
   <ul>${accionesItems}</ul>
+
+  ${(() => {
+    const shots = [
+      ['shot_participantes','Participantes'], ['shot_asistencia','Asistencia'],
+      ['shot_rendimiento','Rendimiento'], ['shot_satisfaccion','Satisfacción']
+    ].filter(([k]) => chartImages[k]);
+    if(!shots.length) return '';
+    return `<h2 style="page-break-before:always;">Anexos: capturas del dashboard</h2>
+    <p class="note">Estas imágenes muestran cómo se veía el dashboard en pantalla, para el periodo y los filtros seleccionados, al momento de generar este informe.</p>
+    <div class="anexos-grid">${shots.map(([k,label]) => `<div class="anexo-item"><h3>${label}</h3>${chartImg(k, 'Captura de la pestaña '+label)}</div>`).join('')}</div>`;
+  })()}
 
   <div class="sign">
     <div class="line">Director(a) del Departamento Académico de Cursos Básicos</div>
@@ -1872,16 +1984,14 @@ function generateReportFromModal(){
   const btn = document.getElementById('btnGenerateReport');
   const originalLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Generando…';
+  btn.textContent = 'Generando gráficos…';
 
-  // Chart images must be captured BEFORE opening the report window: once a new tab/window opens,
-  // this tab becomes a background tab and browsers throttle requestAnimationFrame there, so any
-  // chart rendering started afterwards may never actually paint.
+  // Chart images AND tab screenshots must be captured BEFORE opening the report window: once a
+  // new tab/window opens, this tab becomes a background tab and browsers throttle
+  // requestAnimationFrame there, so any chart rendering started afterwards may never actually paint.
   const openAndWrite = (chartImages) => {
     const html = buildReportHTML(data, reportCustomText, chartImages);
     const w = window.open('', '_blank');
-    btn.disabled = false;
-    btn.textContent = originalLabel;
     if(!w){
       alert('El navegador bloqueó la ventana emergente. Habilita las ventanas emergentes para este sitio e inténtalo de nuevo.');
       return;
@@ -1893,10 +2003,20 @@ function generateReportFromModal(){
   };
 
   buildReportChartImages(data)
+    .then(chartImages => {
+      btn.textContent = 'Capturando pestañas del dashboard…';
+      return captureTabScreenshots(data.periodo)
+        .then(shots => Object.assign(chartImages, shots))
+        .catch(err => { console.error('No se pudieron capturar las pestañas del dashboard:', err); return chartImages; });
+    })
     .then(openAndWrite)
     .catch(err => {
       console.error('No se pudieron generar los gráficos del informe:', err);
       openAndWrite({});
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
     });
 }
 
@@ -2096,4 +2216,4 @@ async function initApp(){
   updateLiveStatusUI();
   render();
 }
-initApp();
+boot();
