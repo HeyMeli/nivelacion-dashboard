@@ -172,6 +172,18 @@ todo el equipo, sin tocar git (ver "Subir Excel con escritura a la Sheet" más a
        return jsonOut({ ok: false, error: 'No existe la pestaña "' + sheetName + '" en esta hoja de cálculo.' });
      }
 
+     // "Limpiar información" del dashboard: borra todas las filas de datos (deja el encabezado).
+     if (body.action === 'clear') {
+       var lastRowClear = sheet.getLastRow();
+       var lastColClear = sheet.getLastColumn();
+       var cleared = 0;
+       if (lastRowClear > 1 && lastColClear > 0) {
+         cleared = lastRowClear - 1;
+         sheet.getRange(2, 1, cleared, lastColClear).clearContent();
+       }
+       return jsonOut({ ok: true, cleared: cleared });
+     }
+
      var incomingHeaders = body.headers || [];
      var incomingRows = body.rows || [];
      var periodoHeader = body.periodoHeader || 'Periodo académico';
@@ -222,7 +234,11 @@ todo el equipo, sin tocar git (ver "Subir Excel con escritura a la Sheet" más a
          });
          return out;
        });
-       sheet.getRange(sheet.getLastRow() + 1, 1, outRows.length, sheetHeaders.length).setValues(outRows);
+       var targetRange = sheet.getRange(sheet.getLastRow() + 1, 1, outRows.length, sheetHeaders.length);
+       // Texto plano: evita que Sheets vuelva a "adivinar" un valor como "2025-1" como fecha al
+       // escribirlo (lo que rompería el filtro de periodo — ver README, "Sobre las fechas...").
+       targetRange.setNumberFormat('@');
+       targetRange.setValues(outRows);
      }
 
      return jsonOut({ ok: true, escritos: incomingRows.length, reemplazados: deleted, periodos: Object.keys(incomingPeriods) });
@@ -348,10 +364,32 @@ había y deja solo el archivo nuevo.
 ### Sobre la carga de Excel *dentro* del dashboard
 
 Sigue siendo útil para: probar datos antes de publicarlos oficialmente, o para uso
-personal de alguien que solo quiere revisar algo puntual sin tocar el repositorio.
-El botón **"Descargar base de datos (.xlsx)"** exporta lo que tengas cargado ahí como
-Excel real — que es justamente el archivo que puedes usar en la Opción A, B o C de arriba
-para "oficializar" esos datos y que los vea todo el equipo.
+personal de alguien que solo quiere revisar algo puntual sin tocar el repositorio — y,
+con la fuente en vivo de Apps Script (Opción 2) configurada, para oficializar datos
+directamente en la base de datos compartida sin pasar por git en absoluto (ver "Subir
+Excel con escritura a la Sheet" más arriba).
+
+### Botón "🗑️ Limpiar información"
+
+Vacía lo cargado para empezar de cero: borra `ATT`/`SAT` en este navegador y su
+autoguardado. Si la fuente en vivo configurada es un Apps Script (Opción 2), **también
+borra todas las filas de datos de la Google Sheet compartida** (deja el encabezado) — lo
+notará todo el equipo, así que pide una confirmación explícita (hay que escribir
+`BORRAR`) antes de ejecutarse. Es irreversible; si necesitas conservar lo que hay,
+descárgalo primero manualmente desde la Google Sheet (Archivo → Descargar).
+
+### Sobre las fechas en columnas de texto (ej. "Semestre")
+
+Si Excel/Sheets interpreta una columna que debería ser texto (como "Semestre" o "Periodo
+académico", ej. "2025-1") como si fuera una **fecha**, el valor que verás no será el que
+escribiste, sino una fecha reformateada — y como la otra planilla (asistencia) sí guarda
+su periodo como texto plano, el filtro de "Periodo académico" dejará de emparejar ambos
+conjuntos de datos (verás información distinta según el periodo elegido). Para evitarlo:
+antes de escribir esos valores, selecciona la columna en Excel/Sheets y ponle formato
+**Texto sin formato / Texto plano** (clic derecho → Formato de celdas, o
+Formato → Número → Texto plano en Sheets). Si una hoja ya tiene filas con este problema,
+usa "🗑️ Limpiar información" (o borra esas filas a mano en la Sheet) y vuelve a subir el
+Excel con la columna ya en formato texto.
 
 ---
 
@@ -397,7 +435,8 @@ Librerías usadas (vía CDN, no hay que instalar nada para ver el dashboard):
   y los datos de "Para" / "De" (nombre y cargo) antes de guardarlo como PDF. Incluye
   imágenes reales de los gráficos (participación, asistencia, rendimiento, satisfacción),
   igual que las capturas de dashboard del informe original.
-- **Descargar base de datos**: exporta todo lo cargado como Excel real, reimportable.
+- **Limpiar información**: borra lo cargado en este navegador y, si hay una fuente en vivo
+  de Apps Script configurada, también vacía la base de datos compartida (con confirmación).
 - **Fuente de datos en vivo** (opcional): conecta una Google Sheet publicada para que el
   equipo vea los mismos datos por el link sin necesidad de git — ver "Base de datos en vivo".
 

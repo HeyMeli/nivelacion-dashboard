@@ -3,8 +3,6 @@
 // so the files stay diffable/reviewable in git. Populated by loadBaseData() before init runs.
 let ATT = [];
 let SAT = [];
-let ORIGINAL_ATT = []; // frozen copy of the data shipped in data/*.json, used by "Restaurar datos originales"
-let ORIGINAL_SAT = [];
 let attSourceName = null; // filename of last uploaded attendance file, or null = original
 let satSourceName = null;
 let loadedFromSnapshot = false; // true if ATT/SAT were restored from this browser's autosave at init
@@ -69,7 +67,12 @@ function extractRawRows(workbook, requiredHeaders){
   const headerIdx = findHeaderRow(matrix, requiredHeaders);
   if(headerIdx === -1) return null;
   const headers = matrix[headerIdx];
-  const rows = matrix.slice(headerIdx + 1).filter(r => r && r.some(c => c!=null && c!==''));
+  // Dates go through as plain "YYYY-MM-DD" text (see dateCellToText) instead of a raw JS Date —
+  // JSON.stringify would otherwise turn it into a UTC timestamp that Apps Script re-parses into a
+  // DIFFERENT date once it lands back in the sheet.
+  const rows = matrix.slice(headerIdx + 1)
+    .filter(r => r && r.some(c => c!=null && c!==''))
+    .map(r => r.map(c => c instanceof Date ? dateCellToText(c) : c));
   return { headers, rows };
 }
 
@@ -97,6 +100,26 @@ async function pushRawRowsToSheet(url, rawHeaders, rawRows, periodoHeader){
   return json;
 }
 
+// Wipes every data row (keeps the header) of the Apps Script's target sheet — used by "Limpiar
+// información" to reset the shared database, not just this browser. Irreversible.
+async function clearSheetViaAppsScript(url){
+  const sep = url.includes('?') ? '&' : '?';
+  let res;
+  try{
+    res = await fetch(url + sep + '_ts=' + Date.now(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'clear' })
+    });
+  }catch(err){
+    throw new Error('No se pudo conectar con la hoja compartida (posible bloqueo de red).');
+  }
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if(!json.ok) throw new Error(json.error || 'La hoja rechazó la solicitud de limpieza.');
+  return json;
+}
+
 async function loadBaseData(){
   sourceConfig = await loadSourceConfig();
   liveAttOk = false; liveSatOk = false;
@@ -118,9 +141,6 @@ async function loadBaseData(){
     if(!liveAttOk){ ATT = (attRes && attRes.ok) ? await attRes.json() : []; }
     if(!liveSatOk){ SAT = (satRes && satRes.ok) ? await satRes.json() : []; }
   }
-
-  ORIGINAL_ATT = JSON.parse(JSON.stringify(ATT));
-  ORIGINAL_SAT = JSON.parse(JSON.stringify(SAT));
 }
 
 const BLUE = ['#1B6FC9', '#5BB0FF', '#0F3E7A', '#8FC7FF', '#2E86E0', '#B9DBFF'];
@@ -934,8 +954,20 @@ function renderComparativo(main, rows){
 // Mirrors the same logic used to build the data bundled with this dashboard (see project notebook),
 // so uploading a fresh export of GIE-DCB-FOR-01 / GIE-DCB-FOR-02 keeps the exact same field names.
 
+// A cell that Excel/Sheets stored with a date format (e.g. someone typed "2025-1" into "Semestre"
+// and it got auto-converted to a real date) comes back from SheetJS as a JS Date, not text — used
+// as-is it renders as a verbose Date string locally, or as a UTC-shifted timestamp once it round-
+// trips through JSON to Apps Script. Render it as its LOCAL calendar date instead, so at least the
+// value stays stable and human-readable (the underlying "wrong column type" is a data-entry issue,
+// not something code can fully undo — see README).
+function dateCellToText(v){
+  const pad = n => String(n).padStart(2,'0');
+  return `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())}`;
+}
+
 function normHeader(v){
   if(v==null) return '';
+  if(v instanceof Date) return dateCellToText(v);
   return String(v).replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();
 }
 
@@ -1243,7 +1275,7 @@ function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawPushOpt
 function setupDataPanel(){
   const fileAtt = document.getElementById('fileAtt');
   const fileSat = document.getElementById('fileSat');
-  const btnRestore = document.getElementById('btnRestore');
+  const btnClear = document.getElementById('btnClearData');
 
   fileAtt.addEventListener('change', ()=>{
     handleFile(fileAtt, 'attStatus', parseAttendanceWorkbook,
@@ -1271,15 +1303,45 @@ function setupDataPanel(){
       },
       { requiredHeaders: SAT_REQUIRED, periodoHeader: 'Semestre', getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });
-  btnRestore.addEventListener('click', ()=>{
-    ATT = JSON.parse(JSON.stringify(ORIGINAL_ATT));
-    SAT = JSON.parse(JSON.stringify(ORIGINAL_SAT));
+  btnClear.addEventListener('click', async ()=>{
+    const sharedAtt = isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
+    const sharedSat = isAppsScriptWriteUrl(sourceConfig.satisfactionUrl);
+    const anyShared = sharedAtt || sharedSat;
+
+    const warning = anyShared
+      ? '¿Seguro que quieres limpiar toda la información?\n\n⚠️ Esto también borrará TODAS las filas de la base de datos compartida en Google Sheets — lo notará TODO EL EQUIPO, no solo tú. Es irreversible.'
+      : '¿Seguro que quieres limpiar toda la información cargada? Se borra de este navegador (no hay una fuente compartida configurada). Es irreversible.';
+    if(!confirm(warning)) return;
+    if(anyShared){
+      const typed = prompt('Para confirmar el borrado de la base de datos compartida, escribe BORRAR (en mayúsculas):');
+      if(typed !== 'BORRAR'){ alert('Cancelado — no se borró nada.'); return; }
+    }
+
+    btnClear.disabled = true;
+    const errors = [];
+    if(sharedAtt){
+      try{ await clearSheetViaAppsScript(sourceConfig.attendanceUrl); }
+      catch(err){ errors.push('Asistencia: ' + err.message); }
+    }
+    if(sharedSat){
+      try{ await clearSheetViaAppsScript(sourceConfig.satisfactionUrl); }
+      catch(err){ errors.push('Satisfacción: ' + err.message); }
+    }
+    btnClear.disabled = false;
+
+    ATT = []; SAT = [];
     attSourceName = null; satSourceName = null;
     fileAtt.value = ''; fileSat.value = '';
-    setFileStatus('attStatus', `${ATT.length} registros (datos originales)`, '');
-    setFileStatus('satStatus', `${SAT.length} registros (datos originales)`, '');
+    setFileStatus('attStatus', '0 registros', '');
+    setFileStatus('satStatus', '0 registros', '');
     clearSnapshot();
-    setAutosaveStatus('Autoguardado borrado — se volvió a los datos originales.', '');
+    if(errors.length){
+      setAutosaveStatus('⚠️ Se limpió este navegador, pero la base de datos compartida no se pudo limpiar del todo — ' + errors.join(' · '), 'err');
+    } else {
+      setAutosaveStatus(anyShared
+        ? '🗑️ Información borrada — este navegador y la base de datos compartida quedaron en cero.'
+        : '🗑️ Información borrada de este navegador.', '');
+    }
     afterDataChange();
   });
 
@@ -1915,55 +1977,6 @@ function setupExportModal(){
   });
 }
 
-// ============ DOWNLOAD CONSOLIDATED DATABASE (.xlsx) ============
-// Writes the full accumulated ATT/SAT dataset back out as two real, standalone .xlsx files using
-// the exact header names the uploader already understands — so these downloads work as a genuine
-// portable "database" backup, and can be re-uploaded later (here or on another computer) to
-// restore everything, independent of this browser's autosave.
-
-function downloadWorkbook(aoa, sheetName, filename){
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, filename);
-}
-
-function exportConsolidatedExcel(){
-  if(!ATT.length && !SAT.length){
-    alert('No hay datos cargados para exportar.');
-    return;
-  }
-  const today = new Date().toISOString().slice(0,10);
-
-  if(ATT.length){
-    const header = ['ID','Apellidos y Nombres','Carrera','Facultad','Sede','Sección','Curso a nivelar',
-      'Periodo académico','S1','S2','S3','S4','S5','S6','S7','Asistencias','% de asistencia',
-      'ED','EC1','EP','Avance obtenido','Avance ideal','Eficacia (%)','Aprobado'];
-    const rows = ATT.map(r => [
-      r.id, r.nombre, r.carrera, r.facultad, r.sede, r.seccion, r.curso, r.periodo,
-      r.s1, r.s2, r.s3, r.s4, r.s5, r.s6, r.s7, r.asistencias,
-      r.pctAsist==null ? null : r.pctAsist/100, // stored as %, uploader expects a 0–1 fraction
-      r.ed, r.ec1, r.ep, r.avanceObt, r.avanceIdeal, r.eficacia, r.aprobado
-    ]);
-    downloadWorkbook([header, ...rows], 'REGISTRO', `nivelacion_asistencia_consolidado_${today}.xlsx`);
-  }
-
-  const dlSat = ()=>{
-    if(!SAT.length) return;
-    const header = ['Carrera','Ciclo','Semestre','Sede','Curso', ...Array.from({length:14},(_,i)=>'P'+(i+1))];
-    const rows = SAT.map(r => [
-      r.carrera, r.ciclo, r.periodo, r.sede, r.curso,
-      ...Array.from({length:14},(_,i)=> r['p'+(i+1)])
-    ]);
-    downloadWorkbook([header, ...rows], 'REGISTRO', `nivelacion_satisfaccion_consolidado_${today}.xlsx`);
-  };
-  // Small delay between the two triggered downloads — some browsers only allow the first
-  // download from a single click to fire immediately and queue/block a second one otherwise.
-  if(ATT.length && SAT.length) setTimeout(dlSat, 300);
-  else dlSat();
-}
-
-
 // ============ INIT ============
 async function initApp(){
   try{
@@ -1999,7 +2012,7 @@ async function initApp(){
     } else if(autosaveEnabled){
       setAutosaveStatus('Los cambios se guardarán automáticamente en este navegador.', '');
     } else {
-      setAutosaveStatus('⚠️ Este navegador no admite autoguardado; usa "Descargar base de datos" para no perder tus cambios.', 'err');
+      setAutosaveStatus('⚠️ Este navegador no admite autoguardado — recuerda no cerrar la pestaña sin haber guardado los cambios en la fuente en vivo.', 'err');
     }
   }
 
@@ -2010,7 +2023,6 @@ async function initApp(){
   setupExportModal();
   setupLiveConfigModal();
   updateLiveStatusUI();
-  document.getElementById('btnDownloadDb').addEventListener('click', exportConsolidatedExcel);
   render();
 }
 initApp();
