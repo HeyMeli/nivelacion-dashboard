@@ -1543,75 +1543,6 @@ async function captureTabScreenshots(periodo){
   return images;
 }
 
-// Renders a chart on a temporary, off-screen canvas using the SAME barChart/donutChart/lineChart
-// helpers the live dashboard uses (so styling matches). Chart.js schedules its actual pixel
-// painting through a shared requestAnimationFrame loop even with animation disabled, so capturing
-// synchronously right after construction yields a blank canvas — this waits a couple of frames
-// (batching every requested chart into the same wait) before reading each one back as a PNG.
-function buildReportChartImages(d){
-  return new Promise((resolve) => {
-    const specs = [];
-    const add = (key, width, height, buildFn) => specs.push({key, width, height, buildFn});
-
-    const estudiantesNoPart = d.estudiantesUnicos - d.estudiantesParticipantes;
-    if(d.estudiantesUnicos > 0){
-      add('condicion', 420, 320, ctx =>
-        donutChart(ctx, ['Participante','No participante'], [d.estudiantesParticipantes, estudiantesNoPart], [BLUE[1], BLUE[2]], {mode:'share', responsive:false}));
-    }
-    if(d.cursos.length){
-      add('participacionCurso', 640, 300, ctx =>
-        barChart(ctx, d.cursos, d.cursos.map(c => d.participacionMx.table[c].Total), {color: BLUE[0], responsive:false}));
-    }
-    if(d.asistenciaByCurso.length){
-      add('asistenciaCurso', 640, 300, ctx =>
-        barChart(ctx, d.asistenciaByCurso.map(a=>a.curso), d.asistenciaByCurso.map(a=>a.avg||0), {isPct:true, max:100, responsive:false}));
-    }
-    if(d.sesionAvg && d.sesionAvg.some(v=>v!=null)){
-      add('asistenciaSesion', 640, 280, ctx =>
-        lineChart(ctx, ['S1','S2','S3','S4','S5','S6','S7'], [{label:'Asistencia', data:d.sesionAvg}], {isPct:true, responsive:false}));
-    }
-    if(d.eficaciaByCurso && d.eficaciaByCurso.length){
-      add('rendimientoCurso', 640, 300, ctx =>
-        barChart(ctx, d.eficaciaByCurso.map(e=>e.curso), d.eficaciaByCurso.map(e=>e.avg||0), {isPct:true, max:100, responsive:false}));
-    }
-    if(d.encuestasTotal > 0 && d.cursos.length){
-      add('satisfaccionCurso', 640, 300, ctx =>
-        barChart(ctx, d.cursos, d.cursos.map(c => d.satMx[c].Total==null ? 0 : d.satMx[c].Total), {isPct:true, max:100, responsive:false}));
-    }
-
-    if(specs.length === 0){ resolve({}); return; }
-
-    const built = specs.map(spec => {
-      const canvas = document.createElement('canvas');
-      canvas.width = spec.width; canvas.height = spec.height;
-      canvas.style.position = 'fixed';
-      canvas.style.left = '-9999px';
-      canvas.style.top = '0';
-      canvas.style.width = spec.width + 'px';
-      canvas.style.height = spec.height + 'px';
-      document.body.appendChild(canvas);
-      let chart = null;
-      try{ chart = spec.buildFn(canvas.getContext('2d')); }
-      catch(err){ console.error('No se pudo construir el gráfico "'+spec.key+'":', err); }
-      return { key: spec.key, canvas, chart };
-    });
-
-    // Two frames: one for Chart.js's internal layout pass, one for the actual paint.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const images = {};
-      built.forEach(b => {
-        if(b.chart){
-          try{ images[b.key] = b.chart.toBase64Image('image/png', 1); }
-          catch(err){ console.error('No se pudo capturar el gráfico "'+b.key+'":', err); }
-          b.chart.destroy();
-        }
-        b.canvas.remove();
-      });
-      resolve(images);
-    }));
-  });
-}
-
 function computeReportData(periodo){
   const scoped = ATT.filter(r =>
     r.periodo === periodo &&
@@ -1785,7 +1716,7 @@ function buildReportHTML(d, customText, chartImages){
   .toolbar span{ color:#fff; font-size:12px; }
   @media print{ .toolbar{ display:none; } body{ padding:0; max-width:100%; } }
   .brand{ display:flex; align-items:center; gap:10px; margin-bottom:18px; }
-  .brand .logo{ width:36px;height:36px;border-radius:6px;background:#0F3E7A;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800; }
+  .brand .logo{ height:36px;min-width:36px;padding:0 6px;border-radius:6px;background:#0F3E7A;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;white-space:nowrap; }
   .brand b{ font-size:14px; }
   h1{ font-size:15px; text-align:center; text-transform:uppercase; letter-spacing:.5px; margin:18px 0 4px; }
   .memoNo{ text-align:center; font-size:11px; color:#5B7089; margin-bottom:18px; }
@@ -1799,11 +1730,7 @@ function buildReportHTML(d, customText, chartImages){
   th{ background:#E8F1FC; color:#0F3E7A; }
   td:first-child, th:first-child{ text-align:left; }
   tr.totalrow{ background:#F4F8FE; font-weight:700; }
-  .chart-row{ display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 12px; }
-  .chart-row.single{ justify-content:center; }
   .report-chart{ max-width:100%; border:1px solid #B9C9DC; border-radius:4px; background:#fff; }
-  .chart-row .report-chart{ flex:1 1 260px; max-width:340px; }
-  .chart-row.single .report-chart{ max-width:380px; }
   .anexos-grid{ display:flex; flex-direction:column; gap:18px; }
   .anexo-item{ page-break-inside:avoid; break-inside:avoid; }
   .anexo-item h3{ text-decoration:none; }
@@ -1819,7 +1746,7 @@ function buildReportHTML(d, customText, chartImages){
     <button onclick="window.print()">🖨️ Imprimir / Guardar como PDF</button>
   </div>
 
-  <div class="brand"><div class="logo">UC</div><b>UNIVERSIDAD CIENTÍFICA DEL SUR</b></div>
+  <div class="brand"><div class="logo">UCSUR</div><b>UNIVERSIDAD CIENTÍFICA DEL SUR</b></div>
   <h1>Informe del Programa de Nivelación</h1>
   <div class="memoNo">N° ____-DACB-U. CIENTÍFICA-${d.periodo.split('-')[0]}</div>
 
@@ -1834,10 +1761,6 @@ function buildReportHTML(d, customText, chartImages){
 
   <h3>Participación</h3>
   <p>De los <strong>${d.totalMatriculados} matriculados</strong> (${d.estudiantesUnicos} estudiantes) inscritos en el programa, participaron ${d.estudiantesParticipantes} estudiantes, que corresponde a un <strong>${d.pctParticipacion.toFixed(1)}%</strong>.</p>
-  <div class="chart-row">
-    ${chartImg('condicion', 'Condición del estudiante')}
-    ${chartImg('participacionCurso', 'Participación por curso')}
-  </div>
   <table><thead><tr><th>Matriculados</th>${d.sedes.map(s=>`<th>${s}</th>`).join('')}<th>Total</th></tr></thead>
     <tbody>${reportMatrixRows(d.matriculadosMx, d.cursos, d.sedes, v=>v)}</tbody></table>
   <table><thead><tr><th>Participación</th>${d.sedes.map(s=>`<th>${s}</th>`).join('')}<th>Total</th></tr></thead>
@@ -1845,22 +1768,16 @@ function buildReportHTML(d, customText, chartImages){
 
   <h3>Asistencia</h3>
   <p>De los ${d.estudiantesParticipantes} estudiantes que participaron en el programa, en promedio asistieron al <strong>${fmtP(d.asistenciaGeneral)}</strong> de sus sesiones.</p>
-  <div class="chart-row">
-    ${chartImg('asistenciaCurso', 'Asistencia por curso')}
-    ${chartImg('asistenciaSesion', 'Asistencia por sesión')}
-  </div>
   <table><thead><tr><th>Curso</th><th>% Asistencia</th></tr></thead><tbody>${asistRows}</tbody></table>
 
   <h3>Rendimiento</h3>
   <p>De los ${d.estudiantesParticipantes} participantes, aprobaron sus primeras evaluaciones (EC1 y/o EP) <strong>${d.totalAprobados}</strong> estudiantes (${d.estudiantesParticipantes ? (d.totalAprobados/d.estudiantesParticipantes*100).toFixed(1) : '0.0'}%).</p>
-  <div class="chart-row single">${chartImg('rendimientoCurso', 'Rendimiento por curso')}</div>
   <table><thead><tr><th rowspan="2">Curso</th>${d.sedes.map(s=>`<th colspan="2">${s}</th>`).join('')}<th colspan="2">Total</th></tr>
     <tr>${d.sedes.map(()=>'<th>Aprobó</th><th>Desaprobó</th>').join('')}<th>Aprobó</th><th>Desaprobó</th></tr></thead>
     <tbody>${rendRows}<tr class="totalrow"><td>TOTAL</td>${d.sedes.map(()=>'<td>—</td><td>—</td>').join('')}<td>${d.totalAprobados}</td><td>${d.totalDesaprobados}</td></tr></tbody></table>
 
   <h3>Satisfacción</h3>
   <p>${d.encuestasTotal ? `De los ${d.estudiantesParticipantes} participantes, ${d.encuestasTotal} contestaron las encuestas, con un porcentaje de satisfacción general del <strong>${fmtP(d.satGeneral)}</strong>.` : 'No se registraron encuestas de satisfacción para el periodo y filtros seleccionados (SD = sin datos).'}</p>
-  <div class="chart-row single">${chartImg('satisfaccionCurso', 'Satisfacción por curso')}</div>
   <table><thead><tr><th>Satisfacción</th>${d.sedes.map(s=>`<th>${s}</th>`).join('')}<th>Total</th></tr></thead><tbody>${satRows}</tbody></table>
 
   ${conclusionesBlock}
@@ -2004,11 +1921,11 @@ function generateReportFromModal(){
   const btn = document.getElementById('btnGenerateReport');
   const originalLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Generando gráficos…';
+  btn.textContent = 'Capturando pestañas del dashboard…';
 
-  // Chart images AND tab screenshots must be captured BEFORE opening the report window: once a
-  // new tab/window opens, this tab becomes a background tab and browsers throttle
-  // requestAnimationFrame there, so any chart rendering started afterwards may never actually paint.
+  // Screenshots must be captured BEFORE opening the report window: once a new tab/window opens,
+  // this tab becomes a background tab and browsers throttle requestAnimationFrame there, so any
+  // chart rendering started afterwards (needed for the screenshots to paint) may never happen.
   const openAndWrite = (chartImages) => {
     const html = buildReportHTML(data, reportCustomText, chartImages);
     const w = window.open('', '_blank');
@@ -2022,16 +1939,10 @@ function generateReportFromModal(){
     closeExportModal();
   };
 
-  buildReportChartImages(data)
-    .then(chartImages => {
-      btn.textContent = 'Capturando pestañas del dashboard…';
-      return captureTabScreenshots(data.periodo)
-        .then(shots => Object.assign(chartImages, shots))
-        .catch(err => { console.error('No se pudieron capturar las pestañas del dashboard:', err); return chartImages; });
-    })
+  captureTabScreenshots(data.periodo)
     .then(openAndWrite)
     .catch(err => {
-      console.error('No se pudieron generar los gráficos del informe:', err);
+      console.error('No se pudieron capturar las pestañas del dashboard:', err);
       openAndWrite({});
     })
     .finally(() => {
