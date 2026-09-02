@@ -1736,6 +1736,7 @@ function buildReportHTML(d, customText, chartImages){
   .anexo-item h3{ text-decoration:none; }
   .anexo-item .report-chart{ max-width:100%; }
   .sign{ margin-top:60px; text-align:center; }
+  .sign-img{ display:block; max-height:70px; max-width:280px; margin:0 auto 4px; }
   .sign .line{ border-top:1px solid #16283F; width:280px; margin:0 auto 4px; padding-top:6px; }
   ul{ margin:6px 0; padding-left:22px; }
   .note{ font-size:10.5px; color:#5B7089; font-style:italic; }
@@ -1800,7 +1801,8 @@ function buildReportHTML(d, customText, chartImages){
   })()}
 
   <div class="sign">
-    <div class="line">Director(a) del Departamento Académico de Cursos Básicos</div>
+    ${customText.firma ? `<img class="sign-img" src="${customText.firma}" alt="Firma">` : ''}
+    <div class="line">${deHtml}</div>
   </div>
 </body></html>`;
 }
@@ -1823,8 +1825,20 @@ const DEFAULT_DE_CARGO = 'Director(a) del Departamento Académico de Cursos Bás
 // modal (and across periods) within the same session — it's only reset by "Restaurar textos".
 const reportCustomText = {
   conclusiones: '', recomendaciones: '', acciones: '',
-  paraNombre: '', paraCargo: '', deNombre: '', deCargo: ''
+  paraNombre: '', paraCargo: '', deNombre: '', deCargo: '',
+  firma: '' // data URL de la imagen de firma subida, o '' si no hay
 };
+
+function showFirmaPreview(){
+  const wrap = document.getElementById('firmaPreviewWrap');
+  const img = document.getElementById('firmaPreviewImg');
+  if(reportCustomText.firma){
+    img.src = reportCustomText.firma;
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
 
 function buildPreviewTablesHTML(d){
   const fmtP = (x)=> x==null ? 'SD' : x.toFixed(1)+'%';
@@ -1898,6 +1912,7 @@ function openExportModal(){
   document.getElementById('taConclusiones').value = reportCustomText.conclusiones;
   document.getElementById('taRecomendaciones').value = reportCustomText.recomendaciones || DEFAULT_RECOMENDACIONES;
   document.getElementById('taAcciones').value = reportCustomText.acciones || DEFAULT_ACCIONES;
+  showFirmaPreview();
 
   document.getElementById('reportModalOverlay').classList.add('open');
 }
@@ -2094,6 +2109,26 @@ function setupExportModal(){
     document.getElementById('taConclusiones').value = '';
     document.getElementById('taRecomendaciones').value = DEFAULT_RECOMENDACIONES;
     document.getElementById('taAcciones').value = DEFAULT_ACCIONES;
+    reportCustomText.firma = '';
+    document.getElementById('inFirma').value = '';
+    showFirmaPreview();
+  });
+
+  document.getElementById('inFirma').addEventListener('change', (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      reportCustomText.firma = ev.target.result;
+      showFirmaPreview();
+    };
+    reader.onerror = ()=> alert('No se pudo leer la imagen de firma.');
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('btnQuitarFirma').addEventListener('click', ()=>{
+    reportCustomText.firma = '';
+    document.getElementById('inFirma').value = '';
+    showFirmaPreview();
   });
 }
 
