@@ -242,7 +242,7 @@ function rebuildFilters(){
   sedeWrap.innerHTML = '';
   cursoWrap.innerHTML = '';
 
-  const periodos = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort();
+  const periodos = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort(comparePeriodos);
   periodos.forEach(p=>{
     const o = document.createElement('option'); o.value=p; o.textContent=p; perSel.appendChild(o);
   });
@@ -347,6 +347,22 @@ function fmtPct(x, d=2){ return (x==null || isNaN(x)) ? '—' : x.toFixed(d)+'%'
 function fmtNum(x, d=2){ return (x==null || isNaN(x)) ? '—' : x.toFixed(d); }
 function avg(arr){ const v = arr.filter(x=>x!=null && !isNaN(x)); return v.length? v.reduce((a,b)=>a+b,0)/v.length : null; }
 function sum(arr){ return arr.filter(x=>x!=null && !isNaN(x)).reduce((a,b)=>a+b,0); }
+
+// Ordena periodos académicos cronológicamente (año, luego semestre) en vez de alfabéticamente —
+// un sort de texto simple se rompe si conviven formatos distintos para lo que debería ser el
+// mismo tipo de periodo (ej. "2024-1" junto a "Nivelación 2024-1"). Extrae el año (4 dígitos) y
+// el primer dígito que le sigue como número de semestre; si un periodo no calza con ese patrón,
+// cae de vuelta a comparar el texto tal cual, para no perderlo del listado ni romper el orden
+// de los demás.
+function comparePeriodos(a, b){
+  const parse = (s) => {
+    const m = String(s).match(/(\d{4}).*?(\d)/);
+    return m ? [parseInt(m[1],10), parseInt(m[2],10)] : null;
+  };
+  const pa = parse(a), pb = parse(b);
+  if(pa && pb) return pa[0]-pb[0] || pa[1]-pb[1];
+  return String(a).localeCompare(String(b));
+}
 function groupBy(rows, key){
   const m = new Map();
   rows.forEach(r=>{
@@ -913,7 +929,7 @@ function renderComparativo(main, rows){
       `ℹ️ Esta pestaña siempre muestra todos los periodos cargados, independientemente del filtro "Periodo académico" (actualmente en "${state.periodo}"). Los demás filtros (Facultad, Carrera, Sede, Curso) sí se aplican.`));
   }
 
-  const periods = [...new Set(rows.map(r=>r.periodo).filter(Boolean))].sort();
+  const periods = [...new Set(rows.map(r=>r.periodo).filter(Boolean))].sort(comparePeriodos);
 
   if(periods.length < 2){
     main.appendChild(el('div',{class:'empty-state'},
@@ -943,7 +959,7 @@ function renderComparativo(main, rows){
   const satRows = SAT.filter(r=> !state.carrera || r.carrera===state.carrera)
                       .filter(r=> !state.sede || r.sede===state.sede)
                       .filter(r=> !state.curso || r.curso===state.curso);
-  const satPeriods = [...new Set(satRows.map(r=>r.periodo).filter(Boolean))].sort();
+  const satPeriods = [...new Set(satRows.map(r=>r.periodo).filter(Boolean))].sort(comparePeriodos);
 
   const g2 = grid('1fr 1fr');
   g2.appendChild(chartCard('Encuestas ejecutadas por semestre', 'cp_encuestas'));
@@ -1221,14 +1237,14 @@ function setFileStatus(id, msg, cls){
 }
 
 function latestPeriod(){
-  const periods = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort();
+  const periods = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort(comparePeriodos);
   return periods.length ? periods[periods.length-1] : '';
 }
 
 function updatePeriodTag(){
   const tag = document.getElementById('periodoTag');
   if(!tag) return;
-  const allPeriods = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort();
+  const allPeriods = [...new Set([...ATT.map(r=>r.periodo), ...SAT.map(r=>r.periodo)].filter(Boolean))].sort(comparePeriodos);
   if(state.periodo){
     tag.textContent = `Mostrando: ${state.periodo}` + (allPeriods.length>1 ? ` (de ${allPeriods.length} periodos cargados)` : '');
   } else {
