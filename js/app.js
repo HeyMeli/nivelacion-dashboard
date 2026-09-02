@@ -139,13 +139,23 @@ async function loadBaseData(){
   sourceConfig = await loadSourceConfig();
   liveAttOk = false; liveSatOk = false;
 
+  // Pide las dos fuentes en vivo al mismo tiempo, no una tras otra — la de asistencia sola ya
+  // tarda varios segundos, así que esperarla antes de siquiera empezar la de satisfacción suma
+  // ambos tiempos en vez de solo el mayor. Promise.allSettled (no Promise.all) porque cada fuente
+  // sigue siendo independiente: si una falla, la otra debe seguir su curso y caer a los datos
+  // locales por su cuenta, igual que antes.
+  const [attResult, satResult] = await Promise.allSettled([
+    sourceConfig.attendanceUrl ? fetchLiveRecords(sourceConfig.attendanceUrl, parseAttendanceWorkbook) : Promise.resolve(null),
+    sourceConfig.satisfactionUrl ? fetchLiveRecords(sourceConfig.satisfactionUrl, parseSatisfactionWorkbook) : Promise.resolve(null)
+  ]);
+
   if(sourceConfig.attendanceUrl){
-    try{ ATT = await fetchLiveRecords(sourceConfig.attendanceUrl, parseAttendanceWorkbook); liveAttOk = true; }
-    catch(err){ console.error('Fuente en vivo de asistencia falló, usando respaldo local:', err); }
+    if(attResult.status === 'fulfilled'){ ATT = attResult.value; liveAttOk = true; }
+    else console.error('Fuente en vivo de asistencia falló, usando respaldo local:', attResult.reason);
   }
   if(sourceConfig.satisfactionUrl){
-    try{ SAT = await fetchLiveRecords(sourceConfig.satisfactionUrl, parseSatisfactionWorkbook); liveSatOk = true; }
-    catch(err){ console.error('Fuente en vivo de satisfacción falló, usando respaldo local:', err); }
+    if(satResult.status === 'fulfilled'){ SAT = satResult.value; liveSatOk = true; }
+    else console.error('Fuente en vivo de satisfacción falló, usando respaldo local:', satResult.reason);
   }
 
   if(!liveAttOk || !liveSatOk){
@@ -2134,6 +2144,9 @@ function setupExportModal(){
 
 // ============ INIT ============
 async function initApp(){
+  // La carga en vivo puede tardar varios segundos — sin esto la pantalla se ve en blanco/rota
+  // todo ese tiempo. render() (más abajo) reemplaza este mensaje apenas dibuja el dashboard real.
+  document.getElementById('main').innerHTML = '<div class="empty-state">⏳ Cargando datos…</div>';
   try{
     await loadBaseData();
   }catch(err){
