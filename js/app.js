@@ -1802,8 +1802,6 @@ function buildReportHTML(d, customText, chartImages){
   <div class="sign">
     <div class="line">Director(a) del Departamento Académico de Cursos Básicos</div>
   </div>
-
-  <p class="note">Informe generado automáticamente desde el dashboard del Programa de Nivelación a partir de los datos cargados (GIE-DCB-FOR-01 / GIE-DCB-FOR-02). Los campos "N°", "Para" y la firma quedan pendientes de completar manualmente.</p>
 </body></html>`;
 }
 
