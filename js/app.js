@@ -428,6 +428,23 @@ function updateDataPanelLabels(){
   if(satLabel) satLabel.textContent = `Satisfacción · ${p.formatCodes.satisfaction}`;
 }
 
+// Usado mientras se generan capturas de pantalla del informe (captureTabScreenshots recorre las
+// pestañas y cambia currentPage/state.periodo durante varios segundos) — si la usuaria cambiara de
+// programa a la mitad, ATT/SAT se intercambiarían bajo esas capturas y el informe saldría mezclado.
+// Guarda el estado "disabled" previo de cada botón para no reactivar por error el de Reforzamiento
+// mientras siga permanentemente deshabilitado ("Todavía en construcción").
+function setProgramSwitchLocked(locked){
+  document.querySelectorAll('#programSwitch button').forEach(b=>{
+    if(locked){
+      b.dataset.wasEnabled = (!b.disabled).toString();
+      b.disabled = true;
+    } else {
+      if(b.dataset.wasEnabled === 'true') b.disabled = false;
+      delete b.dataset.wasEnabled;
+    }
+  });
+}
+
 function setupProgramSwitch(){
   const wrap = document.getElementById('programSwitch');
   if(!wrap) return;
@@ -1508,7 +1525,6 @@ function updatePeriodTag(){
 // de datos (.xlsx)" for a real, shareable/backup-able Excel copy.
 const IDB_NAME = 'nivelacion_dashboard';
 const IDB_STORE = 'snapshots';
-const IDB_KEY = 'current';
 let autosaveEnabled = (typeof indexedDB !== 'undefined');
 
 function idbOpen(){
@@ -1555,10 +1571,13 @@ function setAutosaveStatus(msg, cls){
   elx.className = 'dp-file-status' + (cls ? ' ' + cls : '');
 }
 
+// Cada programa autoguarda bajo su propia clave (activeProgram().idbKey) — Nivelación conserva la
+// clave literal 'current' que ya venía usando (para no perder los autoguardados de antes de este
+// cambio), Reforzamiento usa 'reforzamiento'. Así, cambiar de módulo nunca pisa el autoguardado del otro.
 async function saveSnapshot(){
   if(!autosaveEnabled) return;
   try{
-    await idbPut(IDB_KEY, { att: ATT, sat: SAT, savedAt: new Date().toISOString() });
+    await idbPut(activeProgram().idbKey, { att: ATT, sat: SAT, savedAt: new Date().toISOString() });
     const when = new Date().toLocaleTimeString('es-PE', { hour:'2-digit', minute:'2-digit' });
     setAutosaveStatus(`💾 Guardado automáticamente en este navegador — ${when}`, 'ok');
   }catch(err){
@@ -1569,13 +1588,13 @@ async function saveSnapshot(){
 
 async function loadSnapshot(){
   if(!autosaveEnabled) return null;
-  try{ return await idbGetKey(IDB_KEY); }
+  try{ return await idbGetKey(activeProgram().idbKey); }
   catch(err){ console.error('Autoload failed:', err); return null; }
 }
 
 async function clearSnapshot(){
   if(!autosaveEnabled) return;
-  try{ await idbDeleteKey(IDB_KEY); }catch(err){ console.error('Clear snapshot failed:', err); }
+  try{ await idbDeleteKey(activeProgram().idbKey); }catch(err){ console.error('Clear snapshot failed:', err); }
 }
 
 // Merges an uploaded batch of records into the accumulated dataset by "periodo": any period
@@ -1692,13 +1711,14 @@ function setupDataPanel(){
       { requiredHeaders: programCfg.satRequired, periodoHeader: programCfg.periodoHeaderSat, getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });
   btnClear.addEventListener('click', async ()=>{
+    const programLabel = activeProgram().label;
     const sharedAtt = isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
     const sharedSat = isAppsScriptWriteUrl(sourceConfig.satisfactionUrl);
     const anyShared = sharedAtt || sharedSat;
 
     const warning = anyShared
-      ? '¿Seguro que quieres limpiar toda la información?\n\n⚠️ Esto también borrará TODAS las filas de la base de datos compartida en Google Sheets — lo notará TODO EL EQUIPO, no solo tú. Es irreversible.'
-      : '¿Seguro que quieres limpiar toda la información cargada? Se borra de este navegador (no hay una fuente compartida configurada). Es irreversible.';
+      ? `¿Seguro que quieres limpiar toda la información de ${programLabel}?\n\n⚠️ Esto también borrará TODAS las filas de la base de datos compartida de ${programLabel} en Google Sheets — lo notará TODO EL EQUIPO, no solo tú. Es irreversible. (El otro programa no se ve afectado.)`
+      : `¿Seguro que quieres limpiar toda la información de ${programLabel} cargada? Se borra de este navegador (no hay una fuente compartida configurada). Es irreversible. (El otro programa no se ve afectado.)`;
     if(!confirm(warning)) return;
     if(anyShared){
       const typed = prompt('Para confirmar el borrado de la base de datos compartida, escribe BORRAR (en mayúsculas):');
@@ -1724,11 +1744,11 @@ function setupDataPanel(){
     setFileStatus('satStatus', '0 registros', '');
     clearSnapshot();
     if(errors.length){
-      setAutosaveStatus('⚠️ Se limpió este navegador, pero la base de datos compartida no se pudo limpiar del todo — ' + errors.join(' · '), 'err');
+      setAutosaveStatus(`⚠️ Se limpió ${programLabel} en este navegador, pero la base de datos compartida no se pudo limpiar del todo — ` + errors.join(' · '), 'err');
     } else {
       setAutosaveStatus(anyShared
-        ? '🗑️ Información borrada — este navegador y la base de datos compartida quedaron en cero.'
-        : '🗑️ Información borrada de este navegador.', '');
+        ? `🗑️ Información de ${programLabel} borrada — este navegador y la base de datos compartida quedaron en cero.`
+        : `🗑️ Información de ${programLabel} borrada de este navegador.`, '');
     }
     afterDataChange();
   });
@@ -2189,6 +2209,7 @@ function generateReportFromModal(){
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Capturando pestañas del dashboard…';
+  setProgramSwitchLocked(true);
 
   // Screenshots must be captured BEFORE opening the report window: once a new tab/window opens,
   // this tab becomes a background tab and browsers throttle requestAnimationFrame there, so any
@@ -2215,6 +2236,7 @@ function generateReportFromModal(){
     .finally(() => {
       btn.disabled = false;
       btn.textContent = originalLabel;
+      setProgramSwitchLocked(false);
     });
 }
 
