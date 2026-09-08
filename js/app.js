@@ -144,9 +144,10 @@ async function loadBaseData(){
   // ambos tiempos en vez de solo el mayor. Promise.allSettled (no Promise.all) porque cada fuente
   // sigue siendo independiente: si una falla, la otra debe seguir su curso y caer a los datos
   // locales por su cuenta, igual que antes.
+  const programCfg = activeProgram();
   const [attResult, satResult] = await Promise.allSettled([
-    sourceConfig.attendanceUrl ? fetchLiveRecords(sourceConfig.attendanceUrl, parseAttendanceWorkbook) : Promise.resolve(null),
-    sourceConfig.satisfactionUrl ? fetchLiveRecords(sourceConfig.satisfactionUrl, parseSatisfactionWorkbook) : Promise.resolve(null)
+    sourceConfig.attendanceUrl ? fetchLiveRecords(sourceConfig.attendanceUrl, wb => parseAttendanceWorkbook(wb, programCfg)) : Promise.resolve(null),
+    sourceConfig.satisfactionUrl ? fetchLiveRecords(sourceConfig.satisfactionUrl, wb => parseSatisfactionWorkbook(wb, programCfg)) : Promise.resolve(null)
   ]);
 
   if(sourceConfig.attendanceUrl){
@@ -351,6 +352,7 @@ function setupTabs(){
   });
 }
 let currentPage = 'participantes';
+let currentProgram = 'nivelacion'; // 'nivelacion' | 'reforzamiento' — ver PROGRAMS/switchProgram()
 
 // ============ HELPERS ============
 function fmtPct(x, d=2){ return (x==null || isNaN(x)) ? '—' : x.toFixed(d)+'%'; }
@@ -1096,7 +1098,7 @@ function cleanNum(x){
   return (n==null || isNaN(n) || !isFinite(n)) ? null : n;
 }
 
-function renameCurso(v){
+function renameCursoNivelacion(v){
   const s = normHeader(v).toUpperCase();
   if(s === 'NIVELACIÓN LENGUA Y COM.' || s === 'NIVELACION LENGUA Y COM.') return 'COMUNICACIÓN - NIVELACIÓN';
   if(s === 'NIVELACIÓN MATEMÁTICA' || s === 'NIVELACION MATEMATICA') return 'MATEMATICA - NIVELACIÓN';
@@ -1137,14 +1139,14 @@ function sheetToMatrix(workbook, preferredNames){
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 }
 
-// El Excel oficial trae "% de asistencia" ya calculado como Asistencias/7 (asumiendo el curso
-// completo). El cliente indicó que, mientras el semestre esté en curso, hay que evaluarla sobre
-// el número de sesiones REALMENTE dictadas a la fecha (por ahora 4, no 7) — así que el dashboard
-// ignora esa columna del Excel y calcula su propio % de asistencia con este número. Cuando se
-// dicten más sesiones, actualiza este valor (y vuelve a publicar) para que refleje el total real.
-const SESIONES_DICTADAS = 4;
+// El Excel oficial trae "% de asistencia" ya calculado asumiendo el curso completo (todas sus
+// sesiones). Mientras un ciclo esté en curso, hay que evaluarla sobre el número de sesiones
+// REALMENTE dictadas a la fecha — así que el dashboard ignora esa columna del Excel y calcula su
+// propio % de asistencia con el número configurado para el programa activo (ver PROGRAMS más
+// abajo). Cuando se dicten más sesiones, actualiza ese valor (y vuelve a publicar) para reflejar
+// el total real.
 
-const ATT_FIELD_DEFS = {
+const ATT_FIELD_DEFS_NIVELACION = {
   id: ['ID'], nombre: ['Apellidos y Nombres'], carrera: ['Carrera'], facultad: ['Facultad'],
   sede: ['Sede'], seccion: ['Sección'], curso: ['Curso a nivelar'], periodo: ['Periodo académico'],
   s1:['S1'], s2:['S2'], s3:['S3'], s4:['S4'], s5:['S5'], s6:['S6'], s7:['S7'],
@@ -1154,15 +1156,19 @@ const ATT_FIELD_DEFS = {
   eficacia: ['Eficacia (%)', 'Eficacia(%)', 'Eficacia %'],
   aprobado: ['Aprobado']
 };
-const ATT_REQUIRED = ['ID', 'Apellidos y Nombres', 'Carrera', 'Curso a nivelar', 'Asistencias'];
+const ATT_REQUIRED_NIVELACION = ['ID', 'Apellidos y Nombres', 'Carrera', 'Curso a nivelar', 'Asistencias'];
 
-function parseAttendanceWorkbook(workbook){
+// programCfg viene de PROGRAMS (más abajo) — define qué campos leer (attFieldDefs/attRequired),
+// cómo normalizar el nombre del curso (cursoNormalize), sobre cuántas sesiones calcular el % de
+// asistencia (sesionesDictadas), a partir de cuántas asistencias se considera "Participante"
+// (minAsistenciasParticipante) y si "aprobado" se lee directo del Excel o se calcula (aprobadoStrategy).
+function parseAttendanceWorkbook(workbook, programCfg){
   const matrix = sheetToMatrix(workbook, ['REGISTRO']);
-  const headerIdx = findHeaderRow(matrix, ATT_REQUIRED);
+  const headerIdx = findHeaderRow(matrix, programCfg.attRequired);
   if(headerIdx === -1){
-    throw new Error('No se encontró la fila de encabezados esperada (ID, Apellidos y Nombres, Carrera, Curso a nivelar, Asistencias). Verifica que sea el formato GIE-DCB-FOR-01.');
+    throw new Error(`No se encontró la fila de encabezados esperada (${programCfg.attRequired.join(', ')}). Verifica que sea el formato ${programCfg.formatCodes.attendance}.`);
   }
-  const cols = mapColumns(matrix[headerIdx], ATT_FIELD_DEFS);
+  const cols = mapColumns(matrix[headerIdx], programCfg.attFieldDefs);
   if(cols.id === -1) throw new Error('No se encontró la columna "ID".');
 
   const records = [];
@@ -1174,27 +1180,33 @@ function parseAttendanceWorkbook(workbook){
     const get = (f) => cols[f] !== -1 && cols[f] != null ? row[cols[f]] : null;
 
     const asistencias = Math.round(cleanNum(get('asistencias')) ?? 0);
-    records.push({
+    const rec = {
       id: parseInt(idVal, 10),
       nombre: normHeader(get('nombre')) || null,
       carrera: normHeader(get('carrera')) || null,
       facultad: normHeader(get('facultad')) || null,
       sede: normHeader(get('sede')) || null,
       seccion: normHeader(get('seccion')) || null,
-      curso: renameCurso(get('curso')),
+      curso: programCfg.cursoNormalize(get('curso')),
       periodo: normHeader(get('periodo')) || null,
-      s1: cleanNum(get('s1')), s2: cleanNum(get('s2')), s3: cleanNum(get('s3')), s4: cleanNum(get('s4')),
-      s5: cleanNum(get('s5')), s6: cleanNum(get('s6')), s7: cleanNum(get('s7')),
       asistencias,
-      // Recalculado sobre SESIONES_DICTADAS (ver comentario junto a esa constante), no leído de la
-      // columna "% de asistencia" del Excel — esa sigue asumiendo el curso completo (÷7).
-      pctAsist: Math.round((asistencias / SESIONES_DICTADAS) * 10000) / 100,
+      // Recalculado sobre programCfg.sesionesDictadas, no leído de la columna "% de asistencia"
+      // del Excel — esa sigue asumiendo el curso/programa completo.
+      pctAsist: Math.round((asistencias / programCfg.sesionesDictadas) * 10000) / 100,
       ed: cleanNum(get('ed')), ec1: cleanNum(get('ec1')), ep: cleanNum(get('ep')),
       avanceObt: cleanNum(get('avanceObt')), avanceIdeal: cleanNum(get('avanceIdeal')),
       eficacia: cleanNum(get('eficacia')),
       aprobado: normHeader(get('aprobado')) || null,
-      condicion: asistencias > 0 ? 'Participante' : 'No participante'
-    });
+      condicion: asistencias >= programCfg.minAsistenciasParticipante ? 'Participante' : 'No participante'
+    };
+    programCfg.sesionKeys.forEach(k => { rec[k] = cleanNum(get(k)); });
+    rec.aprobadoBool = programCfg.aprobadoStrategy === 'raw'
+      ? normHeader(get('aprobado')).toLowerCase() === 'si'
+      : (rec.ec1!=null && rec.ec1>=11) || (rec.ep!=null && rec.ep>=11);
+    // Evaluaciones extra que solo tiene Reforzamiento (EC2, EC3, EF) — cleanNum(null)=>null, así que
+    // en Nivelación (que no las tiene en attFieldDefs, cols.ec2===-1) simplemente quedan en null.
+    rec.ec2 = cleanNum(get('ec2')); rec.ec3 = cleanNum(get('ec3')); rec.ef = cleanNum(get('ef'));
+    records.push(rec);
   }
   return records;
 }
@@ -1206,11 +1218,15 @@ const SAT_FIELD_DEFS = {
 };
 const SAT_REQUIRED = ['Carrera', 'Semestre', 'Sede', 'Curso', 'P1'];
 
-function parseSatisfactionWorkbook(workbook){
+// Compartida entre los dos programas: Nivelación y Reforzamiento usan exactamente el mismo
+// formato de encuesta (Carrera/Ciclo/Semestre/Sede/Curso/P1-P14) — Reforzamiento le agrega P15/P16
+// (comentarios de texto libre) que ni están en SAT_FIELD_DEFS ni se usan en ningún cálculo, así que
+// no requieren ningún cambio acá.
+function parseSatisfactionWorkbook(workbook, programCfg){
   const matrix = sheetToMatrix(workbook, ['REGISTRO']);
   const headerIdx = findHeaderRow(matrix, SAT_REQUIRED);
   if(headerIdx === -1){
-    throw new Error('No se encontró la fila de encabezados esperada (Carrera, Semestre, Sede, Curso, P1…). Verifica que sea el formato GIE-DCB-FOR-02.');
+    throw new Error('No se encontró la fila de encabezados esperada (Carrera, Semestre, Sede, Curso, P1…). Verifica que sea el formato ' + (programCfg.formatCodes.satisfaction) + '.');
   }
   const cols = mapColumns(matrix[headerIdx], SAT_FIELD_DEFS);
 
@@ -1230,13 +1246,42 @@ function parseSatisfactionWorkbook(workbook){
       ciclo: get('ciclo') ?? null,
       periodo: normHeader(get('periodo')) || null,
       sede: normHeader(get('sede')) || null,
-      curso: renameCurso(get('curso'))
+      curso: programCfg.cursoNormalize(get('curso'))
     };
     for(let q=1;q<=14;q++) rec['p'+q] = cleanNum(get('p'+q));
     records.push(rec);
   }
   return records;
 }
+
+// ============ PROGRAMAS (Nivelación / Reforzamiento) ============
+// Todo lo que distingue a un programa del otro vive acá — el resto del dashboard sigue leyendo
+// las mismas variables globales de siempre (ATT, SAT, sourceConfig, etc.); ver switchProgram()
+// más abajo para cómo se intercambia el contenido de esas variables al cambiar de programa.
+const PROGRAMS = {
+  nivelacion: {
+    key: 'nivelacion', label: 'Nivelación', labelLower: 'nivelación',
+    formatCodes: { attendance: 'GIE-DCB-FOR-01', satisfaction: 'GIE-DCB-FOR-02' },
+    attFieldDefs: ATT_FIELD_DEFS_NIVELACION,
+    attRequired: ATT_REQUIRED_NIVELACION,
+    satFieldDefs: SAT_FIELD_DEFS, satRequired: SAT_REQUIRED, // compartidos entre ambos programas
+    cursoNormalize: renameCursoNivelacion,
+    cursoColumnHeader: 'Curso a nivelar',
+    sesionKeys: ['s1','s2','s3','s4','s5','s6','s7'],
+    sesionesDictadas: 4,
+    minAsistenciasParticipante: 1, // asistencias > 0 (regla original, ahora expresada como >= 1)
+    evalTypes: [
+      { key:'ed', label:'ED' }, { key:'ec1', label:'EC1' }, { key:'ep', label:'EP' }
+    ],
+    aprobadoStrategy: 'derived', // aprobadoBool = ec1>=11 || ep>=11 (ver parseAttendanceWorkbook)
+    periodoHeaderAtt: 'Periodo académico', periodoHeaderSat: 'Semestre',
+    sourceConfigKeys: { attendanceUrl: 'attendanceUrl', satisfactionUrl: 'satisfactionUrl' },
+    localFallback: { attendance: 'data/attendance.json', satisfaction: 'data/satisfaction.json' },
+    liveConfigOverrideKey: 'nivelacion_source_config_override',
+    idbKey: 'current'
+  }
+};
+function activeProgram(){ return PROGRAMS[currentProgram]; }
 
 // ---- Wiring the file inputs ----
 function setFileStatus(id, msg, cls){
@@ -1428,7 +1473,8 @@ function setupDataPanel(){
   const btnClear = document.getElementById('btnClearData');
 
   fileAtt.addEventListener('change', ()=>{
-    handleFile(fileAtt, 'attStatus', parseAttendanceWorkbook,
+    const programCfg = activeProgram();
+    handleFile(fileAtt, 'attStatus', wb => parseAttendanceWorkbook(wb, programCfg),
       (records, name)=>{
         ATT = mergeByPeriodo(ATT, records);
         attSourceName = name;
@@ -1437,10 +1483,11 @@ function setupDataPanel(){
         const periods = [...new Set(ATT.map(r=>r.periodo).filter(Boolean))];
         return `total acumulado: ${ATT.length} registros en ${periods.length} periodo(s)`;
       },
-      { requiredHeaders: ATT_REQUIRED, periodoHeader: 'Periodo académico', getLiveUrl: ()=> sourceConfig.attendanceUrl });
+      { requiredHeaders: programCfg.attRequired, periodoHeader: programCfg.periodoHeaderAtt, getLiveUrl: ()=> sourceConfig.attendanceUrl });
   });
   fileSat.addEventListener('change', ()=>{
-    handleFile(fileSat, 'satStatus', parseSatisfactionWorkbook,
+    const programCfg = activeProgram();
+    handleFile(fileSat, 'satStatus', wb => parseSatisfactionWorkbook(wb, programCfg),
       (records, name)=>{
         SAT = mergeByPeriodo(SAT, records);
         satSourceName = name;
@@ -1449,7 +1496,7 @@ function setupDataPanel(){
         const periods = [...new Set(SAT.map(r=>r.periodo).filter(Boolean))];
         return `total acumulado: ${SAT.length} registros en ${periods.length} periodo(s)`;
       },
-      { requiredHeaders: SAT_REQUIRED, periodoHeader: 'Semestre', getLiveUrl: ()=> sourceConfig.satisfactionUrl });
+      { requiredHeaders: programCfg.satRequired, periodoHeader: programCfg.periodoHeaderSat, getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });
   btnClear.addEventListener('click', async ()=>{
     const sharedAtt = isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
@@ -1504,8 +1551,6 @@ function setupDataPanel(){
 // report (header block, Conclusiones with Matriculados/Participación/%Asistencia/Rendimiento/
 // Satisfacción tables, Recomendaciones, Acciones, firma) using whatever period + filters are
 // currently active, and opens it in a new tab ready to print/save as PDF.
-
-function aprobadoFlag(r){ return (r.ec1!=null && r.ec1>=11) || (r.ep!=null && r.ep>=11); }
 
 function nextFrame(){ return new Promise(r => requestAnimationFrame(r)); }
 
@@ -1610,14 +1655,14 @@ function computeReportData(periodo){
     rendMx[c] = {};
     sedes.forEach(s=>{
       const subset = participantesRows.filter(r=>r.curso===c && r.sede===s);
-      const aprobo = subset.filter(aprobadoFlag).length;
+      const aprobo = subset.filter(r=>r.aprobadoBool).length;
       rendMx[c][s] = { aprobo, desaprobo: subset.length - aprobo };
     });
     const subsetC = participantesRows.filter(r=>r.curso===c);
-    const aproboC = subsetC.filter(aprobadoFlag).length;
+    const aproboC = subsetC.filter(r=>r.aprobadoBool).length;
     rendMx[c].Total = { aprobo: aproboC, desaprobo: subsetC.length - aproboC };
   });
-  const totalAprobados = participantesRows.filter(aprobadoFlag).length;
+  const totalAprobados = participantesRows.filter(r=>r.aprobadoBool).length;
   const totalDesaprobados = participantesRows.length - totalAprobados;
 
   // Satisfacción matrix (from SAT data, may be sparse -> null shown as "SD")
@@ -2040,7 +2085,7 @@ async function testLiveConfig(){
   if(attUrl){
     attResultEl.textContent = 'Probando…'; attResultEl.className = 'dp-file-status';
     try{
-      const records = await fetchLiveRecords(attUrl, parseAttendanceWorkbook);
+      const records = await fetchLiveRecords(attUrl, wb => parseAttendanceWorkbook(wb, activeProgram()));
       attResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
       attResultEl.className = 'dp-file-status ok';
       attOk = true;
@@ -2052,7 +2097,7 @@ async function testLiveConfig(){
   if(satUrl){
     satResultEl.textContent = 'Probando…'; satResultEl.className = 'dp-file-status';
     try{
-      const records = await fetchLiveRecords(satUrl, parseSatisfactionWorkbook);
+      const records = await fetchLiveRecords(satUrl, wb => parseSatisfactionWorkbook(wb, activeProgram()));
       satResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
       satResultEl.className = 'dp-file-status ok';
       satOk = true;
