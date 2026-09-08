@@ -38,9 +38,13 @@
   <div class="brand">
     <div class="logo">UCSUR</div>
     <div>
-      <h1>Programa de Nivelación</h1>
+      <h1 id="programTitle">Programa de Nivelación</h1>
       <p>Departamento Académico de Cursos Básicos · Universidad Científica del Sur</p>
     </div>
+  </div>
+  <div class="program-switch" id="programSwitch">
+    <button data-program="nivelacion" class="active">Nivelación</button>
+    <button data-program="reforzamiento" disabled title="Todavía en construcción">Reforzamiento</button>
   </div>
   <div style="display:flex; align-items:center; gap:10px;">
     <div style="font-size:11px;opacity:.85;text-align:right;">
@@ -63,7 +67,7 @@
 
 <div class="data-panel" id="dataPanel">
   <div class="dp-group">
-    <label>Asistencia y calificaciones · GIE-DCB-FOR-01</label>
+    <label id="lblFileAtt">Asistencia y calificaciones · GIE-DCB-FOR-01</label>
     <div class="dp-file">
       <span class="tag">.xlsx</span>
       <input type="file" id="fileAtt" accept=".xlsx,.xls" multiple>
@@ -71,7 +75,7 @@
     <div class="dp-file-status" id="attStatus"></div>
   </div>
   <div class="dp-group">
-    <label>Satisfacción · GIE-DCB-FOR-02</label>
+    <label id="lblFileSat">Satisfacción · GIE-DCB-FOR-02</label>
     <div class="dp-file">
       <span class="tag">.xlsx</span>
       <input type="file" id="fileSat" accept=".xlsx,.xls" multiple>

@@ -229,7 +229,8 @@ function boot(){
 }
 
 // ============ STATE ============
-const state = { periodo: '', facultad: '', carrera: '', sede: '', curso: '' };
+// curso es un ARRAY (selección múltiple, lo pide el formato de Reforzamiento) — vacío = "todos".
+const state = { periodo: '', facultad: '', carrera: '', sede: '', curso: [] };
 let charts = {}; // registry to destroy on re-render
 
 function destroyCharts(){
@@ -296,21 +297,25 @@ function rebuildFilters(){
   });
   if(!sedes.includes(state.sede)) state.sede = '';
 
+  // Selección múltiple: cada pill se prende/apaga sola, sin desactivar a las demás (a diferencia
+  // de Sede arriba, que sigue siendo de selección única). Con 0 o 1 curso elegido se comporta
+  // exactamente igual que antes del cambio a array.
   const cursos = [...new Set([...ATT.map(r=>r.curso), ...SAT.map(r=>r.curso)].filter(Boolean))].sort();
   cursos.forEach(c=>{
     const b = document.createElement('button');
-    b.className='pill'+(state.curso===c?' active':''); b.textContent=c; b.dataset.val=c;
+    b.className='pill'+(state.curso.includes(c)?' active':''); b.textContent=c; b.dataset.val=c;
     b.addEventListener('click', ()=>{
-      state.curso = state.curso === c ? '' : c;
-      [...cursoWrap.children].forEach(p=>p.classList.toggle('active', p.dataset.val===state.curso));
+      if(state.curso.includes(c)) state.curso = state.curso.filter(v=>v!==c);
+      else state.curso = [...state.curso, c];
+      b.classList.toggle('active', state.curso.includes(c));
       render();
     });
     cursoWrap.appendChild(b);
   });
-  if(!cursos.includes(state.curso)) state.curso = '';
+  state.curso = state.curso.filter(c=>cursos.includes(c));
 
   document.getElementById('resetFilters').onclick = ()=>{
-    state.facultad=''; state.carrera=''; state.sede=''; state.curso='';
+    state.facultad=''; state.carrera=''; state.sede=''; state.curso=[];
     facSel.value=''; refreshCarreras();
     [...sedeWrap.children].forEach(p=>p.classList.remove('active'));
     [...cursoWrap.children].forEach(p=>p.classList.remove('active'));
@@ -324,7 +329,7 @@ function applyFilters(rows){
     (!state.facultad || r.facultad === state.facultad) &&
     (!state.carrera || r.carrera === state.carrera) &&
     (!state.sede || r.sede === state.sede) &&
-    (!state.curso || r.curso === state.curso)
+    (!state.curso.length || state.curso.includes(r.curso))
   );
 }
 
@@ -335,7 +340,7 @@ function applyFiltersExceptPeriodo(rows){
     (!state.facultad || r.facultad === state.facultad) &&
     (!state.carrera || r.carrera === state.carrera) &&
     (!state.sede || r.sede === state.sede) &&
-    (!state.curso || r.curso === state.curso)
+    (!state.curso.length || state.curso.includes(r.curso))
   );
 }
 
@@ -349,6 +354,56 @@ function setupTabs(){
     btn.classList.add('active');
     currentPage = btn.dataset.page;
     render();
+  });
+}
+
+// ============ PROGRAM SWITCH (Nivelación / Reforzamiento) ============
+// ATT/SAT/sourceConfig/attSourceName/satSourceName/liveAttOk/liveSatOk siguen siendo variables
+// globales de siempre — al cambiar de programa se guarda el contenido actual bajo la clave del
+// programa saliente y se restaura el del programa entrante, así el resto del dashboard (filtros,
+// render, exportar informe) no necesita enterarse de que existe más de un programa.
+let PROGRAM_DATA = {
+  nivelacion:    { att: [], sat: [], attSourceName: null, satSourceName: null,
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false },
+  reforzamiento: { att: [], sat: [], attSourceName: null, satSourceName: null,
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false }
+};
+
+function switchProgram(newKey){
+  if(newKey === currentProgram || !PROGRAMS[newKey]) return;
+  PROGRAM_DATA[currentProgram] = { att: ATT, sat: SAT, attSourceName, satSourceName, sourceConfig, liveAttOk, liveSatOk };
+  currentProgram = newKey;
+  const d = PROGRAM_DATA[newKey];
+  ATT = d.att; SAT = d.sat; attSourceName = d.attSourceName; satSourceName = d.satSourceName;
+  sourceConfig = d.sourceConfig; liveAttOk = d.liveAttOk; liveSatOk = d.liveSatOk;
+
+  document.querySelectorAll('#programSwitch button').forEach(b => b.classList.toggle('active', b.dataset.program === newKey));
+  state.periodo = ''; state.facultad = ''; state.carrera = ''; state.sede = ''; state.curso = [];
+  state.periodo = latestPeriod();
+  rebuildFilters();
+  updateDataPanelLabels();
+  render();
+  updateLiveStatusUI();
+}
+
+// Relabela el título del header y el panel de subida de Excel según el programa activo.
+function updateDataPanelLabels(){
+  const p = activeProgram();
+  const title = document.getElementById('programTitle');
+  const attLabel = document.getElementById('lblFileAtt');
+  const satLabel = document.getElementById('lblFileSat');
+  if(title) title.textContent = `Programa de ${p.label}`;
+  if(attLabel) attLabel.textContent = `Asistencia y calificaciones · ${p.formatCodes.attendance}`;
+  if(satLabel) satLabel.textContent = `Satisfacción · ${p.formatCodes.satisfaction}`;
+}
+
+function setupProgramSwitch(){
+  const wrap = document.getElementById('programSwitch');
+  if(!wrap) return;
+  wrap.addEventListener('click', e=>{
+    const btn = e.target.closest('button[data-program]');
+    if(!btn || btn.disabled) return;
+    switchProgram(btn.dataset.program);
   });
 }
 let currentPage = 'participantes';
@@ -856,7 +911,7 @@ function renderSatisfaccion(main){
 
   let rows = SAT.filter(r=> !state.carrera || r.carrera===state.carrera)
                 .filter(r=> !state.sede || r.sede===state.sede)
-                .filter(r=> !state.curso || r.curso===state.curso)
+                .filter(r=> !state.curso.length || state.curso.includes(r.curso))
                 .filter(r=> !state.periodo || r.periodo===state.periodo);
 
   if(rows.length===0){
@@ -970,7 +1025,7 @@ function renderComparativo(main, rows){
   // Satisfaction uses its own filter pool (same fields as the Satisfacción tab)
   const satRows = SAT.filter(r=> !state.carrera || r.carrera===state.carrera)
                       .filter(r=> !state.sede || r.sede===state.sede)
-                      .filter(r=> !state.curso || r.curso===state.curso);
+                      .filter(r=> !state.curso.length || state.curso.includes(r.curso));
   const satPeriods = [...new Set(satRows.map(r=>r.periodo).filter(Boolean))].sort(comparePeriodos);
 
   const g2 = grid('1fr 1fr');
@@ -1396,7 +1451,7 @@ function mergeByPeriodo(existing, incoming){
 }
 
 function afterDataChange(){
-  state.facultad = ''; state.carrera = ''; state.sede = ''; state.curso = '';
+  state.facultad = ''; state.carrera = ''; state.sede = ''; state.curso = [];
   // Default to the most recently loaded period, so it's always clear which cycle is on screen —
   // the user can still switch to "Todos los periodos" via the filter, or use the Comparativo tab.
   state.periodo = latestPeriod();
@@ -1604,13 +1659,13 @@ function computeReportData(periodo){
     (!state.facultad || r.facultad === state.facultad) &&
     (!state.carrera || r.carrera === state.carrera) &&
     (!state.sede || r.sede === state.sede) &&
-    (!state.curso || r.curso === state.curso)
+    (!state.curso.length || state.curso.includes(r.curso))
   );
   const satScoped = SAT.filter(r =>
     r.periodo === periodo &&
     (!state.carrera || r.carrera === state.carrera) &&
     (!state.sede || r.sede === state.sede) &&
-    (!state.curso || r.curso === state.curso)
+    (!state.curso.length || state.curso.includes(r.curso))
   );
 
   const cursos = [...new Set(scoped.map(r=>r.curso).filter(Boolean))].sort();
@@ -1701,7 +1756,7 @@ function computeReportData(periodo){
     carreraLabel: state.carrera || 'todas las carreras',
     facultadLabel: state.facultad || null,
     sedeLabel: state.sede || null,
-    cursoLabel: state.curso || null
+    cursoLabel: state.curso.length ? state.curso.join(', ') : null
   };
 }
 
@@ -2232,6 +2287,8 @@ async function initApp(){
   state.periodo = latestPeriod();
   rebuildFilters();
   setupTabs();
+  setupProgramSwitch();
+  updateDataPanelLabels();
   setupDataPanel();
   setupExportModal();
   setupLiveConfigModal();
