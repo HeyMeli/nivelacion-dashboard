@@ -11,18 +11,32 @@ let loadedFromSnapshot = false; // true if ATT/SAT were restored from this brows
 // Apps Script Web App — see README) that, when set, are fetched fresh every time ANYONE opens the
 // link, so the whole team sees the same up-to-date data without anyone touching git. A personal
 // localStorage override lets one person test their own URLs before committing them for everyone.
-const LIVE_CONFIG_KEY = 'nivelacion_source_config_override';
 let sourceConfig = { attendanceUrl: '', satisfactionUrl: '' };
 let liveAttOk = false, liveSatOk = false; // whether each half actually loaded live on the last attempt
 
-async function loadSourceConfig(){
-  let cfg = { attendanceUrl: '', satisfactionUrl: '' };
+// data/source-config.json trae las URLs de LOS DOS programas en un solo archivo plano (con
+// prefijo "reforzamiento..." para las de Reforzamiento) — se cachea acá para no pedirlo dos veces
+// al cargar ambos programas al inicio.
+let _rawSourceConfigCache = null;
+async function loadRawSourceConfig(){
+  if(_rawSourceConfigCache) return _rawSourceConfigCache;
+  let j = {};
   try{
     const res = await fetch('data/source-config.json', { cache: 'no-store' });
-    if(res.ok){ const j = await res.json(); cfg = { attendanceUrl: j.attendanceUrl||'', satisfactionUrl: j.satisfactionUrl||'' }; }
+    if(res.ok) j = await res.json();
   }catch(err){ /* file missing or unreachable (e.g. opened via file://) — stay with local data */ }
+  _rawSourceConfigCache = j;
+  return j;
+}
+
+async function loadSourceConfig(programCfg){
+  const raw = await loadRawSourceConfig();
+  let cfg = {
+    attendanceUrl: raw[programCfg.sourceConfigKeys.attendanceUrl] || '',
+    satisfactionUrl: raw[programCfg.sourceConfigKeys.satisfactionUrl] || ''
+  };
   try{
-    const override = localStorage.getItem(LIVE_CONFIG_KEY);
+    const override = localStorage.getItem(programCfg.liveConfigOverrideKey);
     if(override){ const j = JSON.parse(override); if(j.attendanceUrl) cfg.attendanceUrl = j.attendanceUrl; if(j.satisfactionUrl) cfg.satisfactionUrl = j.satisfactionUrl; }
   }catch(err){ /* localStorage unavailable or corrupt override — ignore */ }
   return cfg;
@@ -135,38 +149,55 @@ async function clearSheetViaAppsScript(url){
   return json;
 }
 
-async function loadBaseData(){
-  sourceConfig = await loadSourceConfig();
-  liveAttOk = false; liveSatOk = false;
+// Carga los datos de UN programa (en vivo si tiene URL configurada, si no o si falla cae a su
+// data/*.json local) y devuelve todo lo que antes vivía en las variables globales sueltas — para
+// poder cargar los dos programas a la vez al arrancar, sin que uno pise al otro.
+async function loadProgramData(programCfg){
+  const sourceConfig = await loadSourceConfig(programCfg);
+  let att = [], sat = [], liveAttOk = false, liveSatOk = false;
 
-  // Pide las dos fuentes en vivo al mismo tiempo, no una tras otra — la de asistencia sola ya
-  // tarda varios segundos, así que esperarla antes de siquiera empezar la de satisfacción suma
-  // ambos tiempos en vez de solo el mayor. Promise.allSettled (no Promise.all) porque cada fuente
-  // sigue siendo independiente: si una falla, la otra debe seguir su curso y caer a los datos
-  // locales por su cuenta, igual que antes.
-  const programCfg = activeProgram();
+  // Pide las dos fuentes en vivo al mismo tiempo, no una tras otra. Promise.allSettled (no
+  // Promise.all) porque cada fuente sigue siendo independiente: si una falla, la otra debe seguir
+  // su curso y caer a los datos locales por su cuenta.
   const [attResult, satResult] = await Promise.allSettled([
     sourceConfig.attendanceUrl ? fetchLiveRecords(sourceConfig.attendanceUrl, wb => parseAttendanceWorkbook(wb, programCfg)) : Promise.resolve(null),
     sourceConfig.satisfactionUrl ? fetchLiveRecords(sourceConfig.satisfactionUrl, wb => parseSatisfactionWorkbook(wb, programCfg)) : Promise.resolve(null)
   ]);
 
   if(sourceConfig.attendanceUrl){
-    if(attResult.status === 'fulfilled'){ ATT = attResult.value; liveAttOk = true; }
-    else console.error('Fuente en vivo de asistencia falló, usando respaldo local:', attResult.reason);
+    if(attResult.status === 'fulfilled'){ att = attResult.value; liveAttOk = true; }
+    else console.error(`Fuente en vivo de asistencia (${programCfg.label}) falló, usando respaldo local:`, attResult.reason);
   }
   if(sourceConfig.satisfactionUrl){
-    if(satResult.status === 'fulfilled'){ SAT = satResult.value; liveSatOk = true; }
-    else console.error('Fuente en vivo de satisfacción falló, usando respaldo local:', satResult.reason);
+    if(satResult.status === 'fulfilled'){ sat = satResult.value; liveSatOk = true; }
+    else console.error(`Fuente en vivo de satisfacción (${programCfg.label}) falló, usando respaldo local:`, satResult.reason);
   }
 
   if(!liveAttOk || !liveSatOk){
     const [attRes, satRes] = await Promise.all([
-      liveAttOk ? null : fetch('data/attendance.json'),
-      liveSatOk ? null : fetch('data/satisfaction.json')
+      liveAttOk ? null : fetch(programCfg.localFallback.attendance),
+      liveSatOk ? null : fetch(programCfg.localFallback.satisfaction)
     ]);
-    if(!liveAttOk){ ATT = (attRes && attRes.ok) ? await attRes.json() : []; }
-    if(!liveSatOk){ SAT = (satRes && satRes.ok) ? await satRes.json() : []; }
+    if(!liveAttOk){ att = (attRes && attRes.ok) ? await attRes.json() : []; }
+    if(!liveSatOk){ sat = (satRes && satRes.ok) ? await satRes.json() : []; }
   }
+
+  return { att, sat, sourceConfig, liveAttOk, liveSatOk };
+}
+
+// Carga LOS DOS programas al arrancar (así cambiar de uno a otro después es instantáneo, sin
+// spinner) y activa el contenido del programa que esté seleccionado (currentProgram) en las
+// variables globales de siempre (ATT/SAT/sourceConfig/liveAttOk/liveSatOk).
+async function loadBaseData(){
+  const keys = Object.keys(PROGRAMS);
+  const results = await Promise.all(keys.map(k => loadProgramData(PROGRAMS[k])));
+  keys.forEach((k, i) => {
+    const r = results[i];
+    PROGRAM_DATA[k] = { att: r.att, sat: r.sat, attSourceName: null, satSourceName: null,
+      sourceConfig: r.sourceConfig, liveAttOk: r.liveAttOk, liveSatOk: r.liveSatOk };
+  });
+  const d = PROGRAM_DATA[currentProgram];
+  ATT = d.att; SAT = d.sat; sourceConfig = d.sourceConfig; liveAttOk = d.liveAttOk; liveSatOk = d.liveSatOk;
 }
 
 const BLUE = ['#1B6FC9', '#5BB0FF', '#0F3E7A', '#8FC7FF', '#2E86E0', '#B9DBFF'];
@@ -1309,6 +1340,20 @@ function parseSatisfactionWorkbook(workbook, programCfg){
   return records;
 }
 
+// GIE-DCB-FOR-05 — no trae Facultad ni columna de "Retirado" (mismo hueco de datos que ya tiene
+// Nivelación con Facultad/Retirados: se muestran en 0/"—" hasta que el Excel oficial las incluya).
+const ATT_FIELD_DEFS_REFORZAMIENTO = {
+  id: ['ID'], nombre: ['Apellidos y Nombres'], carrera: ['Carrera'], facultad: ['Facultad'],
+  sede: ['Sede'], seccion: ['Sección'], curso: ['Curso a reforzar'], periodo: ['Periodo académico'],
+  s1:['S1'],s2:['S2'],s3:['S3'],s4:['S4'],s5:['S5'],s6:['S6'],s7:['S7'],s8:['S8'],s9:['S9'],s10:['S10'],s11:['S11'],s12:['S12'],
+  asistencias: ['Asistencias'], pctAsist: ['% de asistencia'],
+  ed: ['ED'], ec1: ['EC1'], ec2: ['EC2'], ec3: ['EC3'], ep: ['EP'], ef: ['EF'],
+  avanceObt: ['Avance obtenido'], avanceIdeal: ['Avance ideal'],
+  eficacia: ['Rendimiento (%)', 'Rendimiento(%)', 'Rendimiento %'],
+  aprobado: ['Aprobado']
+};
+const ATT_REQUIRED_REFORZAMIENTO = ['ID', 'Apellidos y Nombres', 'Carrera', 'Curso a reforzar', 'Asistencias'];
+
 // ============ PROGRAMAS (Nivelación / Reforzamiento) ============
 // Todo lo que distingue a un programa del otro vive acá — el resto del dashboard sigue leyendo
 // las mismas variables globales de siempre (ATT, SAT, sourceConfig, etc.); ver switchProgram()
@@ -1334,6 +1379,32 @@ const PROGRAMS = {
     localFallback: { attendance: 'data/attendance.json', satisfaction: 'data/satisfaction.json' },
     liveConfigOverrideKey: 'nivelacion_source_config_override',
     idbKey: 'current'
+  },
+  reforzamiento: {
+    key: 'reforzamiento', label: 'Reforzamiento', labelLower: 'reforzamiento',
+    formatCodes: { attendance: 'GIE-DCB-FOR-05', satisfaction: 'GIE-DCB-FOR-06' },
+    attFieldDefs: ATT_FIELD_DEFS_REFORZAMIENTO,
+    attRequired: ATT_REQUIRED_REFORZAMIENTO,
+    satFieldDefs: SAT_FIELD_DEFS, satRequired: SAT_REQUIRED, // compartidos entre ambos programas
+    // Los cursos ya vienen con nombre propio y bien escritos en el Excel (Álgebra, Física,
+    // Biología...) — a diferencia de Nivelación, acá no hace falta ninguna tabla de reemplazo.
+    cursoNormalize: (v) => normHeader(v) || null,
+    cursoColumnHeader: 'Curso a reforzar',
+    sesionKeys: ['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'], // van 10 dictadas este ciclo
+    sesionesDictadas: 10,
+    minAsistenciasParticipante: 6, // regla oficial: "participó" quien asistió a 6 o más de 10
+    evalTypes: [
+      { key:'ed', label:'ED' }, { key:'ec1', label:'EC1' }, { key:'ec2', label:'EC2' },
+      { key:'ec3', label:'EC3' }, { key:'ep', label:'EP' }, { key:'ef', label:'EF' }
+    ],
+    // A diferencia de Nivelación, acá se confía en la columna "Aprobado" que ya trae el Excel
+    // (Sí/No) en vez de inventar un umbral propio combinando las 6 evaluaciones.
+    aprobadoStrategy: 'raw',
+    periodoHeaderAtt: 'Periodo académico', periodoHeaderSat: 'Semestre',
+    sourceConfigKeys: { attendanceUrl: 'reforzamientoAttendanceUrl', satisfactionUrl: 'reforzamientoSatisfactionUrl' },
+    localFallback: { attendance: 'data/attendance-reforzamiento.json', satisfaction: 'data/satisfaction-reforzamiento.json' },
+    liveConfigOverrideKey: 'reforzamiento_source_config_override',
+    idbKey: 'reforzamiento'
   }
 };
 function activeProgram(){ return PROGRAMS[currentProgram]; }
@@ -2179,7 +2250,7 @@ function saveLiveConfigLocally(){
   const attUrl = document.getElementById('liveAttUrl').value.trim();
   const satUrl = document.getElementById('liveSatUrl').value.trim();
   try{
-    localStorage.setItem(LIVE_CONFIG_KEY, JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }));
+    localStorage.setItem(activeProgram().liveConfigOverrideKey, JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }));
     alert('Guardado solo en este navegador. Recarga la página para probarlo — esto NO afecta lo que ve el resto del equipo.');
   }catch(err){
     alert('No se pudo guardar en este navegador: ' + err.message);
@@ -2187,7 +2258,7 @@ function saveLiveConfigLocally(){
 }
 
 function clearLiveConfigLocally(){
-  try{ localStorage.removeItem(LIVE_CONFIG_KEY); }catch(err){}
+  try{ localStorage.removeItem(activeProgram().liveConfigOverrideKey); }catch(err){}
   alert('Prueba local eliminada. Recarga la página para volver a la configuración oficial del repositorio.');
 }
 
