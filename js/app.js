@@ -663,7 +663,8 @@ function noDataBanner(main){
 
 // ============ PAGE: PARTICIPANTES ============
 function renderParticipantes(main, rows){
-  main.appendChild(el('div',{class:'page-title'},'Participantes en el programa de nivelación'));
+  const programCfg = activeProgram();
+  main.appendChild(el('div',{class:'page-title'},`Participantes en el programa de ${programCfg.labelLower}`));
   if(ATT.length === 0){ noDataBanner(main); return; }
 
   const matriculas = rows.length;
@@ -741,7 +742,8 @@ function renderParticipantes(main, rows){
 
 // ============ PAGE: ASISTENCIA ============
 function renderAsistencia(main, rows){
-  main.appendChild(el('div',{class:'page-title'},'Asistencia en el programa de nivelación'));
+  const programCfg = activeProgram();
+  main.appendChild(el('div',{class:'page-title'},`Asistencia en el programa de ${programCfg.labelLower}`));
   if(ATT.length === 0){ noDataBanner(main); return; }
 
   const participantes = rows.filter(r=>r.condicion==='Participante');
@@ -760,8 +762,9 @@ function renderAsistencia(main, rows){
   g1.appendChild(chartCard('Asistencia promedio por curso (%)', 'a_curso'));
   main.appendChild(g1);
 
+  const sess = programCfg.sesionKeys;
   const g2 = grid('1fr 1fr');
-  g2.appendChild(chartCard('Asistencia promedio por sesión — S1 a S7 (%)', 'a_sesion'));
+  g2.appendChild(chartCard(`Asistencia promedio por sesión — S1 a S${sess.length} (%)`, 'a_sesion'));
   g2.appendChild(chartCard('Asistencia promedio por sección — top 10 (%)', 'a_seccion'));
   main.appendChild(g2);
 
@@ -769,13 +772,12 @@ function renderAsistencia(main, rows){
   main.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
 
   // detail table
-  const sess = ['s1','s2','s3','s4','s5','s6','s7'];
   const tc = card(`Detalle de asistencia por estudiante (${rows.length})`);
   const tscroll = el('div',{class:'table-scroll'});
   const table = el('table');
   table.appendChild(el('thead',{}, el('tr',{},
-    el('th',{},'ID'), el('th',{},'Apellidos y Nombres'), el('th',{},'Carrera'), el('th',{},'Curso a nivelar'),
-    el('th',{},'S1'), el('th',{},'S2'), el('th',{},'S3'), el('th',{},'S4'), el('th',{},'S5'), el('th',{},'S6'), el('th',{},'S7'),
+    el('th',{},'ID'), el('th',{},'Apellidos y Nombres'), el('th',{},'Carrera'), el('th',{},programCfg.cursoColumnHeader),
+    ...sess.map(s=> el('th',{}, s.toUpperCase())),
     el('th',{},'Asistencia'), el('th',{},'% de asistencia')
   )));
   const tbody = el('tbody');
@@ -802,7 +804,7 @@ function renderAsistencia(main, rows){
     charts.a_curso = barChart(document.getElementById('a_curso'), cursoLabels,
       cursoLabels.map(k=> avg(cursoMap.get(k).map(r=>r.pctAsist))||0), {isPct:true, max:100});
 
-    const sesionLabels = ['S1','S2','S3','S4','S5','S6','S7'];
+    const sesionLabels = sess.map(s=>s.toUpperCase());
     const sesionVals = sess.map(s=>{
       const vals = participantes.map(r=>r[s]).filter(v=>v!=null);
       return vals.length ? (sum(vals)/vals.length*100) : null;
@@ -829,28 +831,29 @@ function renderAsistencia(main, rows){
 
 // ============ PAGE: RENDIMIENTO ============
 function renderRendimiento(main, rows){
-  main.appendChild(el('div',{class:'page-title'},'Rendimiento en el programa de nivelación'));
+  const programCfg = activeProgram();
+  main.appendChild(el('div',{class:'page-title'},`Rendimiento en el programa de ${programCfg.labelLower}`));
   if(ATT.length === 0){ noDataBanner(main); return; }
 
   const participantes = rows.filter(r=>r.condicion==='Participante');
-  const ed = avg(participantes.map(r=>r.ed));
-  const ec1 = avg(participantes.map(r=>r.ec1));
-  const ep = avg(participantes.map(r=>r.ep));
-  const avanceObt = sum(participantes.map(r=>r.avanceObt));
-  const avanceIdeal = sum(participantes.map(r=>r.avanceIdeal));
-  const rendGeneral = avanceIdeal ? (avanceObt/avanceIdeal*7.6) : 0;
+  const evalAvgs = {};
+  programCfg.evalTypes.forEach(ev=>{ evalAvgs[ev.key] = avg(participantes.map(r=>r[ev.key])); });
+  const rendGeneral = programCfg.rendGeneral.compute(participantes);
   const participantesActivos = participantes.length; // por matrícula, no por estudiante único
 
   const gaugeRow = el('div',{}); gaugeRow.setAttribute('style','display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
-  const gcard1 = card('Rendimiento general'); gcard1.querySelector('.body').appendChild(gaugeCard('g_rend','sobre 7.60', rendGeneral, 7.6, v=>v.toFixed(2), BLUE[0]));
-  const gcard2 = card('Promedio ED'); gcard2.querySelector('.body').appendChild(gaugeCard('g_ed','sobre 20', ed||0, 20, v=>v.toFixed(2), BLUE[2]));
-  const gcard3 = card('Promedio EC1'); gcard3.querySelector('.body').appendChild(gaugeCard('g_ec1','sobre 20', ec1||0, 20, v=>v.toFixed(2), BLUE[1]));
-  const gcard4 = card('Promedio EP'); gcard4.querySelector('.body').appendChild(gaugeCard('g_ep','sobre 20', ep||0, 20, v=>v.toFixed(2), BLUE[4]));
-  [gcard1,gcard2,gcard3,gcard4].forEach(c=>gaugeRow.appendChild(c));
+  const gcardGeneral = card('Rendimiento general');
+  gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), BLUE[0]));
+  gaugeRow.appendChild(gcardGeneral);
+  programCfg.evalTypes.forEach(ev=>{
+    const gc = card('Promedio '+ev.label);
+    gc.querySelector('.body').appendChild(gaugeCard('g_'+ev.key, 'sobre 20', evalAvgs[ev.key]||0, 20, v=>v.toFixed(2), ev.color));
+    gaugeRow.appendChild(gc);
+  });
   main.appendChild(gaugeRow);
 
   const kpis = el('div',{class:'grid kpi-row'});
-  kpis.appendChild(kpi('Participantes activos en el programa de nivelación', participantesActivos, 'por matrícula, no por estudiante único'));
+  kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos, 'por matrícula, no por estudiante único'));
   main.appendChild(kpis);
 
   const g1 = grid('1fr 1fr');
@@ -860,10 +863,10 @@ function renderRendimiento(main, rows){
 
   main.appendChild(chartCard('Rendimiento promedio por carrera — top 15 (%)', 'r_carrera', {tall:true}));
 
-  const g2 = grid('1fr 1fr 1fr');
-  g2.appendChild(chartCard('Rendimiento en ED por carrera — top 12', 'r_ed_carrera', {tall:true}));
-  g2.appendChild(chartCard('Rendimiento en EC1 por carrera — top 12', 'r_ec1_carrera', {tall:true}));
-  g2.appendChild(chartCard('Rendimiento en EP por carrera — top 12', 'r_ep_carrera', {tall:true}));
+  const g2 = grid(programCfg.evalTypes.map(()=>'1fr').join(' '));
+  programCfg.evalTypes.forEach(ev=>{
+    g2.appendChild(chartCard(`Rendimiento en ${ev.label} por carrera — top 12`, `r_${ev.key}_carrera`, {tall:true}));
+  });
   main.appendChild(g2);
 
   // detail table
@@ -871,15 +874,15 @@ function renderRendimiento(main, rows){
   const tscroll = el('div',{class:'table-scroll'});
   const table = el('table');
   table.appendChild(el('thead',{}, el('tr',{},
-    el('th',{},'ID'), el('th',{},'Apellidos y Nombres'), el('th',{},'Carrera'), el('th',{},'Curso a nivelar'),
-    el('th',{},'ED'), el('th',{},'EC1'), el('th',{},'EP'),
+    el('th',{},'ID'), el('th',{},'Apellidos y Nombres'), el('th',{},'Carrera'), el('th',{},programCfg.cursoColumnHeader),
+    ...programCfg.evalTypes.map(ev=> el('th',{},ev.label)),
     el('th',{},'Avance obtenido'), el('th',{},'Avance ideal'), el('th',{},'Rendimiento')
   )));
   const tbody = el('tbody');
   participantes.slice().sort((a,b)=> (b.eficacia||0)-(a.eficacia||0)).slice(0,300).forEach(r=>{
     tbody.appendChild(el('tr',{},
       el('td',{}, String(r.id)), el('td',{}, r.nombre||''), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
-      el('td',{}, fmtNum(r.ed,1)), el('td',{}, fmtNum(r.ec1,1)), el('td',{}, fmtNum(r.ep,1)),
+      ...programCfg.evalTypes.map(ev=> el('td',{}, fmtNum(r[ev.key],1))),
       el('td',{}, fmtNum(r.avanceObt,2)), el('td',{}, fmtNum(r.avanceIdeal,2)),
       el('td',{}, fmtPct(r.eficacia==null ? null : r.eficacia*100))
     ));
@@ -905,17 +908,11 @@ function renderRendimiento(main, rows){
     charts.r_carrera = barChart(document.getElementById('r_carrera'),
       carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
 
-    const edEntries = topN(carMap, 12, v=> avg(v.map(r=>r.ed))||0);
-    charts.r_ed_carrera = barChart(document.getElementById('r_ed_carrera'),
-      edEntries.map(t=>t.label), edEntries.map(t=>t.value), {horizontal:true, max:20, thick:12, labelSize:9});
-
-    const ec1Entries = topN(carMap, 12, v=> avg(v.map(r=>r.ec1))||0);
-    charts.r_ec1_carrera = barChart(document.getElementById('r_ec1_carrera'),
-      ec1Entries.map(t=>t.label), ec1Entries.map(t=>t.value), {horizontal:true, max:20, thick:12, labelSize:9});
-
-    const epEntries = topN(carMap, 12, v=> avg(v.map(r=>r.ep))||0);
-    charts.r_ep_carrera = barChart(document.getElementById('r_ep_carrera'),
-      epEntries.map(t=>t.label), epEntries.map(t=>t.value), {horizontal:true, max:20, thick:12, labelSize:9});
+    programCfg.evalTypes.forEach(ev=>{
+      const entries = topN(carMap, 12, v=> avg(v.map(r=>r[ev.key]))||0);
+      charts['r_'+ev.key+'_carrera'] = barChart(document.getElementById('r_'+ev.key+'_carrera'),
+        entries.map(t=>t.label), entries.map(t=>t.value), {horizontal:true, max:20, thick:12, labelSize:9});
+    });
   });
 }
 
@@ -937,8 +934,30 @@ const PREGUNTAS = {
   p14:'¿El curso contribuye a comprender mejor los temas desarrollados en los cursos regulares?'
 };
 
+// Mismo cuestionario (P1-P14), con la redacción propia del formato GIE-DCB-FOR-06 (P6, P8, P12-P14
+// mencionan "el reforzamiento" en vez de "la clase"/"el curso") — las claves p1..p14 son las mismas,
+// así que todo el cálculo numérico (computeReportData, renderComparativo) no necesita distinguir cuál se usa.
+const PREGUNTAS_REFORZAMIENTO = {
+  p1:'¿El docente desarrolla los temas y actividades propuestas?',
+  p2:'¿El docente explica claramente el resultado de aprendizaje y las competencias en cada clase?',
+  p3:'¿El docente es puntual y cumple con el horario establecido?',
+  p4:'¿El docente cuenta con un ambiente de clase apropiado (sonido, lugar, conexión wifi, iluminación)?',
+  p5:'¿El docente domina el tema que enseña?',
+  p6:'¿El docente gestiona adecuadamente el tiempo del reforzamiento?',
+  p7:'¿El docente utiliza ejemplos, casos y/o actividades que refuerzan la competencia de la asignatura?',
+  p8:'¿El docente utiliza recursos tecnológicos (esquemas, gráficos, videos y otros) que facilitan la comprensión de los contenidos?',
+  p9:'¿El docente realiza actividades prácticas que refuerzan lo aprendido en clase?',
+  p10:'¿El docente responde consultas, preguntas y/o comentarios de manera respetuosa y oportuna?',
+  p11:'¿El docente promueve la participación e interés por aprender?',
+  p12:'¿El docente retroalimenta oportunamente los resultados de los ejercicios propuestos para mejorar mi aprendizaje?',
+  p13:'¿El aula virtual del curso presenta materiales educativos que ayudan a mejorar mi comprensión de los temas?',
+  p14:'¿El Reforzamiento contribuye a reforzar los temas desarrollados en los cursos regulares?'
+};
+
 function renderSatisfaccion(main){
-  main.appendChild(el('div',{class:'page-title'},'Satisfacción en el programa de nivelación'));
+  const programCfg = activeProgram();
+  const preguntas = programCfg.preguntas;
+  main.appendChild(el('div',{class:'page-title'},`Satisfacción en el programa de ${programCfg.labelLower}`));
 
   let rows = SAT.filter(r=> !state.carrera || r.carrera===state.carrera)
                 .filter(r=> !state.sede || r.sede===state.sede)
@@ -950,7 +969,7 @@ function renderSatisfaccion(main){
     return;
   }
 
-  const qkeys = Object.keys(PREGUNTAS);
+  const qkeys = Object.keys(preguntas);
   function avgQ(k, subset){ return avg(subset.map(r=>r[k])); }
   const overall = avg(qkeys.flatMap(k=> rows.map(r=>r[k])));
   const overallPct = overall!=null ? overall*10 : null; // scale 0-10 to %
@@ -988,7 +1007,7 @@ function renderSatisfaccion(main){
   const qbody = qc.querySelector('.body');
   const qlist = el('div',{});
   qlist.setAttribute('style','font-size:11.5px;line-height:1.8;color:#5B7089;column-count:2;column-gap:20px;');
-  qkeys.forEach(k=>{ qlist.appendChild(el('div',{}, `${k.toUpperCase()}: ${PREGUNTAS[k]}`)); });
+  qkeys.forEach(k=>{ qlist.appendChild(el('div',{}, `${k.toUpperCase()}: ${preguntas[k]}`)); });
   qbody.appendChild(qlist);
   main.appendChild(qc);
 
@@ -1020,7 +1039,8 @@ function renderSatisfaccion(main){
 
 // ============ PAGE: COMPARATIVO (histórico por periodo) ============
 function renderComparativo(main, rows){
-  main.appendChild(el('div',{class:'page-title'},'Comparativo por periodo del programa de nivelación'));
+  const programCfg = activeProgram();
+  main.appendChild(el('div',{class:'page-title'},`Comparativo por periodo del programa de ${programCfg.labelLower}`));
 
   if(state.periodo){
     main.appendChild(el('div',{class:'note'},
@@ -1050,7 +1070,7 @@ function renderComparativo(main, rows){
   g1.appendChild(chartCard('Asistencia en los cursos por semestre (%)', 'cp_curso_asist'));
   main.appendChild(g1);
 
-  main.appendChild(chartCard('Rendimiento de evaluaciones por semestre (ED / EC1 / EP)', 'cp_rendimiento'));
+  main.appendChild(chartCard(`Rendimiento de evaluaciones por semestre (${programCfg.evalTypes.map(ev=>ev.label).join(' / ')})`, 'cp_rendimiento'));
   main.appendChild(chartCard('Avance obtenido vs. avance ideal por semestre (%)', 'cp_avance'));
 
   // Satisfaction uses its own filter pool (same fields as the Satisfacción tab)
@@ -1098,11 +1118,10 @@ function renderComparativo(main, rows){
     }));
     charts.cp_curso_asist = lineChart(document.getElementById('cp_curso_asist'), periods, cpCursoAsist, {isPct:true});
 
-    const rendDatasets = [
-      {label:'ED', color:BLUE[2], data: periods.map(p=> avg(rows.filter(r=>r.periodo===p && r.condicion==='Participante').map(r=>r.ed)))},
-      {label:'EC1', color:BLUE[1], data: periods.map(p=> avg(rows.filter(r=>r.periodo===p && r.condicion==='Participante').map(r=>r.ec1)))},
-      {label:'EP', color:BLUE[4], data: periods.map(p=> avg(rows.filter(r=>r.periodo===p && r.condicion==='Participante').map(r=>r.ep)))}
-    ];
+    const rendDatasets = programCfg.evalTypes.map(ev=> ({
+      label: ev.label, color: ev.color,
+      data: periods.map(p=> avg(rows.filter(r=>r.periodo===p && r.condicion==='Participante').map(r=>r[ev.key])))
+    }));
     charts.cp_rendimiento = lineChart(document.getElementById('cp_rendimiento'), periods, rendDatasets);
 
     const avanceVals = periods.map(p => {
@@ -1117,7 +1136,7 @@ function renderComparativo(main, rows){
     const encVals = satPeriods.map(p => satRows.filter(r=>r.periodo===p).length);
     charts.cp_encuestas = barChart(document.getElementById('cp_encuestas'), satPeriods, encVals, {color:BLUE[1]});
 
-    const qkeys = Object.keys(PREGUNTAS);
+    const qkeys = Object.keys(programCfg.preguntas);
     const satVals = satPeriods.map(p => {
       const subset = satRows.filter(r=>r.periodo===p);
       const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk])));
@@ -1371,14 +1390,25 @@ const PROGRAMS = {
     sesionesDictadas: 4,
     minAsistenciasParticipante: 1, // asistencias > 0 (regla original, ahora expresada como >= 1)
     evalTypes: [
-      { key:'ed', label:'ED' }, { key:'ec1', label:'EC1' }, { key:'ep', label:'EP' }
+      { key:'ed', label:'ED', color: BLUE[2] }, { key:'ec1', label:'EC1', color: BLUE[1] }, { key:'ep', label:'EP', color: BLUE[4] }
     ],
+    // "Rendimiento general": suma de avance obtenido / suma de avance ideal, llevado a una escala
+    // de 0 a 7.60 (así lo muestra el informe oficial de Nivelación).
+    rendGeneral: {
+      max: 7.6, label: 'sobre 7.60',
+      compute: (participantes) => {
+        const obt = sum(participantes.map(r=>r.avanceObt));
+        const ideal = sum(participantes.map(r=>r.avanceIdeal));
+        return ideal ? (obt/ideal*7.6) : 0;
+      }
+    },
     aprobadoStrategy: 'derived', // aprobadoBool = ec1>=11 || ep>=11 (ver parseAttendanceWorkbook)
     periodoHeaderAtt: 'Periodo académico', periodoHeaderSat: 'Semestre',
     sourceConfigKeys: { attendanceUrl: 'attendanceUrl', satisfactionUrl: 'satisfactionUrl' },
     localFallback: { attendance: 'data/attendance.json', satisfaction: 'data/satisfaction.json' },
     liveConfigOverrideKey: 'nivelacion_source_config_override',
-    idbKey: 'current'
+    idbKey: 'current',
+    preguntas: PREGUNTAS
   },
   reforzamiento: {
     key: 'reforzamiento', label: 'Reforzamiento', labelLower: 'reforzamiento',
@@ -1394,9 +1424,16 @@ const PROGRAMS = {
     sesionesDictadas: 10,
     minAsistenciasParticipante: 6, // regla oficial: "participó" quien asistió a 6 o más de 10
     evalTypes: [
-      { key:'ed', label:'ED' }, { key:'ec1', label:'EC1' }, { key:'ec2', label:'EC2' },
-      { key:'ec3', label:'EC3' }, { key:'ep', label:'EP' }, { key:'ef', label:'EF' }
+      { key:'ed', label:'ED', color: BLUE[2] }, { key:'ec1', label:'EC1', color: BLUE[1] }, { key:'ec2', label:'EC2', color: BLUE[3] },
+      { key:'ec3', label:'EC3', color: BLUE[5] }, { key:'ep', label:'EP', color: BLUE[4] }, { key:'ef', label:'EF', color: BLUE[0] }
     ],
+    // "Rendimiento general" en Reforzamiento: el informe oficial lo muestra como el promedio del
+    // "Avance obtenido" de los participantes, en escala de 0 a 20 (no la razón obt/ideal*7.6 de
+    // Nivelación) — ver gauge "Rendimiento Promedio Obtenido" del informe de referencia.
+    rendGeneral: {
+      max: 20, label: 'sobre 20',
+      compute: (participantes) => avg(participantes.map(r=>r.avanceObt)) || 0
+    },
     // A diferencia de Nivelación, acá se confía en la columna "Aprobado" que ya trae el Excel
     // (Sí/No) en vez de inventar un umbral propio combinando las 6 evaluaciones.
     aprobadoStrategy: 'raw',
@@ -1404,7 +1441,8 @@ const PROGRAMS = {
     sourceConfigKeys: { attendanceUrl: 'reforzamientoAttendanceUrl', satisfactionUrl: 'reforzamientoSatisfactionUrl' },
     localFallback: { attendance: 'data/attendance-reforzamiento.json', satisfaction: 'data/satisfaction-reforzamiento.json' },
     liveConfigOverrideKey: 'reforzamiento_source_config_override',
-    idbKey: 'reforzamiento'
+    idbKey: 'reforzamiento',
+    preguntas: PREGUNTAS_REFORZAMIENTO
   }
 };
 function activeProgram(){ return PROGRAMS[currentProgram]; }
