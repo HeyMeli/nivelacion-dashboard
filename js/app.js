@@ -1373,6 +1373,25 @@ const ATT_FIELD_DEFS_REFORZAMIENTO = {
 };
 const ATT_REQUIRED_REFORZAMIENTO = ['ID', 'Apellidos y Nombres', 'Carrera', 'Curso a reforzar', 'Asistencias'];
 
+// Textos por defecto de "Recomendaciones" / "Acciones" del informe exportado — se usan mientras
+// la usuaria no escriba los suyos propios en el modal de exportar (ver reportContentText más abajo).
+// Van antes de PROGRAMS porque cada entrada de PROGRAMS los referencia (defaultRecomendaciones/defaultAcciones).
+const DEFAULT_RECOMENDACIONES = 'Se recomienda que, a partir de los resultados obtenidos, el Decano y las autoridades de la carrera analicen y establezcan estrategias de seguimiento de sus estudiantes en sus respectivos programas de tutoría.';
+const DEFAULT_ACCIONES = [
+  'Mayor difusión de los programas en las sesiones regulares con la participación de docentes de CCBB, área de Admisión, Decanos, directores y tutores de carrera.',
+  'Capacitaciones a los docentes que cubren el perfil de docentes que dictan nivelación.',
+  'Motivar a los estudiantes que deben asistir al programa de nivelación incentivándolos con actividades lúdicas.'
+].join('\n');
+
+// Para Reforzamiento — inspirados en las recomendaciones del informe oficial de referencia
+// (Biología Marina, 2024-2), redactados de forma genérica ya que ese informe es de otro periodo.
+const DEFAULT_RECOMENDACIONES_REFORZAMIENTO = 'Se recomienda que, a partir de los resultados obtenidos, los Decanos y tutores de carrera analicen y establezcan estrategias de seguimiento y apoyo en la motivación para la asistencia de los estudiantes a los programas de reforzamiento en el siguiente periodo académico.';
+const DEFAULT_ACCIONES_REFORZAMIENTO = [
+  'Promover el programa de reforzamiento del siguiente periodo entre los estudiantes que desaprobaron el ciclo actual.',
+  'Realizar comunicaciones vía correo institucional, telefónica y en aula a los estudiantes que llevan el curso por tercera o cuarta vez.',
+  'Coordinar con Decanos y tutores de carrera el seguimiento de los estudiantes con baja asistencia al programa.'
+].join('\n');
+
 // ============ PROGRAMAS (Nivelación / Reforzamiento) ============
 // Todo lo que distingue a un programa del otro vive acá — el resto del dashboard sigue leyendo
 // las mismas variables globales de siempre (ATT, SAT, sourceConfig, etc.); ver switchProgram()
@@ -1408,7 +1427,12 @@ const PROGRAMS = {
     localFallback: { attendance: 'data/attendance.json', satisfaction: 'data/satisfaction.json' },
     liveConfigOverrideKey: 'nivelacion_source_config_override',
     idbKey: 'current',
-    preguntas: PREGUNTAS
+    preguntas: PREGUNTAS,
+    // Texto de la sección "Rendimiento" del informe exportado — Nivelación aprueba en base a
+    // EC1/EP (ver aprobadoStrategy: 'derived').
+    reportAprobacionTexto: (d) => `De los ${d.estudiantesParticipantes} participantes, aprobaron sus primeras evaluaciones (EC1 y/o EP) <strong>${d.totalAprobados}</strong> estudiantes (${d.estudiantesParticipantes ? (d.totalAprobados/d.estudiantesParticipantes*100).toFixed(1) : '0.0'}%).`,
+    defaultRecomendaciones: DEFAULT_RECOMENDACIONES,
+    defaultAcciones: DEFAULT_ACCIONES
   },
   reforzamiento: {
     key: 'reforzamiento', label: 'Reforzamiento', labelLower: 'reforzamiento',
@@ -1442,7 +1466,12 @@ const PROGRAMS = {
     localFallback: { attendance: 'data/attendance-reforzamiento.json', satisfaction: 'data/satisfaction-reforzamiento.json' },
     liveConfigOverrideKey: 'reforzamiento_source_config_override',
     idbKey: 'reforzamiento',
-    preguntas: PREGUNTAS_REFORZAMIENTO
+    preguntas: PREGUNTAS_REFORZAMIENTO,
+    // Reforzamiento aprueba según la columna "Aprobado" del Excel (ver aprobadoStrategy: 'raw'),
+    // no por EC1/EP como Nivelación — el texto del informe lo refleja.
+    reportAprobacionTexto: (d) => `De los ${d.estudiantesParticipantes} participantes, aprobaron el curso <strong>${d.totalAprobados}</strong> estudiantes (${d.estudiantesParticipantes ? (d.totalAprobados/d.estudiantesParticipantes*100).toFixed(1) : '0.0'}%), según la columna "Aprobado" registrada en el formato.`,
+    defaultRecomendaciones: DEFAULT_RECOMENDACIONES_REFORZAMIENTO,
+    defaultAcciones: DEFAULT_ACCIONES_REFORZAMIENTO
   }
 };
 function activeProgram(){ return PROGRAMS[currentProgram]; }
@@ -1829,8 +1858,10 @@ function computeReportData(periodo){
   const totalAprobados = participantesRows.filter(r=>r.aprobadoBool).length;
   const totalDesaprobados = participantesRows.length - totalAprobados;
 
+  const programCfg = activeProgram();
+
   // Satisfacción matrix (from SAT data, may be sparse -> null shown as "SD")
-  const qkeys = Object.keys(PREGUNTAS);
+  const qkeys = Object.keys(programCfg.preguntas);
   function satPct(subset){ const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk]))); return v!=null ? v*10 : null; }
   const satMx = {};
   cursos.forEach(c=>{
@@ -1848,8 +1879,8 @@ function computeReportData(periodo){
     return { curso: c, avg: v!=null ? v*100 : null };
   });
 
-  // Asistencia promedio por sesión S1–S7 — used for the report's chart image
-  const sessKeys = ['s1','s2','s3','s4','s5','s6','s7'];
+  // Asistencia promedio por sesión — used for the report's chart image
+  const sessKeys = programCfg.sesionKeys;
   const sesionAvg = sessKeys.map(s=>{
     const vals = participantesRows.map(r=>r[s]).filter(v=>v!=null);
     return vals.length ? (sum(vals)/vals.length*100) : null;
@@ -1865,7 +1896,8 @@ function computeReportData(periodo){
     carreraLabel: state.carrera || 'todas las carreras',
     facultadLabel: state.facultad || null,
     sedeLabel: state.sede || null,
-    cursoLabel: state.curso.length ? state.curso.join(', ') : null
+    cursoLabel: state.curso.length ? state.curso.join(', ') : null,
+    programKey: programCfg.key, programLabel: programCfg.label, programLower: programCfg.labelLower
   };
 }
 
@@ -1920,13 +1952,13 @@ function buildReportHTML(d, customText, chartImages){
     ? `<h3>Análisis adicional</h3>${textToParagraphs(conclusionesExtra)}`
     : '';
 
-  const recomendacionesTxt = (customText.recomendaciones || '').trim() || DEFAULT_RECOMENDACIONES;
-  const accionesTxt = (customText.acciones || '').trim() || DEFAULT_ACCIONES;
+  const recomendacionesTxt = (customText.recomendaciones || '').trim() || PROGRAMS[d.programKey].defaultRecomendaciones;
+  const accionesTxt = (customText.acciones || '').trim() || PROGRAMS[d.programKey].defaultAcciones;
   const accionesItems = textToListItems(accionesTxt);
 
   return `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8">
-<title>Informe Programa de Nivelación — ${d.periodo}</title>
+<title>Informe Programa de ${d.programLabel} — ${d.periodo}</title>
 <style>
   @page { size: A4; margin: 2cm 1.8cm; }
   body{ font-family: 'Calibri','Segoe UI',Arial,sans-serif; color:#16283F; font-size:12.5px; line-height:1.5; max-width:800px; margin:0 auto; padding:24px; }
@@ -1967,15 +1999,15 @@ function buildReportHTML(d, customText, chartImages){
   </div>
 
   <div class="brand"><div class="logo">UCSUR</div><b>UNIVERSIDAD CIENTÍFICA DEL SUR</b></div>
-  <h1>Informe del Programa de Nivelación</h1>
+  <h1>Informe del Programa de ${d.programLabel}</h1>
   <div class="memoNo">N° ____-DACB-U. CIENTÍFICA-${d.periodo.split('-')[0]}</div>
 
   <div class="memoRow"><b>Para</b><span>: ${paraHtml}</span></div>
   <div class="memoRow"><b>De</b><span>: ${deHtml}</span></div>
-  <div class="memoRow"><b>Asunto</b><span>: Informe de resultados del programa de nivelación periodo ${d.periodo}</span></div>
+  <div class="memoRow"><b>Asunto</b><span>: Informe de resultados del programa de ${d.programLower} periodo ${d.periodo}</span></div>
   <div class="memoRow"><b>Fecha</b><span>: ${today}</span></div>
 
-  <p style="margin-top:16px;">Es grato dirigirme a Ud. para comunicarle los resultados obtenidos del programa de nivelación, implementado por el Departamento Académico de Cursos Básicos, aplicado a los estudiantes de ${d.carreraLabel} durante el periodo ${d.periodo}${filtrosTxt ? ` (${filtrosTxt})` : ''}. A continuación, se muestran los siguientes resultados:</p>
+  <p style="margin-top:16px;">Es grato dirigirme a Ud. para comunicarle los resultados obtenidos del programa de ${d.programLower}, implementado por el Departamento Académico de Cursos Básicos, aplicado a los estudiantes de ${d.carreraLabel} durante el periodo ${d.periodo}${filtrosTxt ? ` (${filtrosTxt})` : ''}. A continuación, se muestran los siguientes resultados:</p>
 
   <h2>Conclusiones</h2>
 
@@ -1991,7 +2023,7 @@ function buildReportHTML(d, customText, chartImages){
   <table><thead><tr><th>Curso</th><th>% Asistencia</th></tr></thead><tbody>${asistRows}</tbody></table>
 
   <h3>Rendimiento</h3>
-  <p>De los ${d.estudiantesParticipantes} participantes, aprobaron sus primeras evaluaciones (EC1 y/o EP) <strong>${d.totalAprobados}</strong> estudiantes (${d.estudiantesParticipantes ? (d.totalAprobados/d.estudiantesParticipantes*100).toFixed(1) : '0.0'}%).</p>
+  <p>${PROGRAMS[d.programKey].reportAprobacionTexto(d)}</p>
   <table><thead><tr><th rowspan="2">Curso</th>${d.sedes.map(s=>`<th colspan="2">${s}</th>`).join('')}<th colspan="2">Total</th></tr>
     <tr>${d.sedes.map(()=>'<th>Aprobó</th><th>Desaprobó</th>').join('')}<th>Aprobó</th><th>Desaprobó</th></tr></thead>
     <tbody>${rendRows}<tr class="totalrow"><td>TOTAL</td>${d.sedes.map(()=>'<td>—</td><td>—</td>').join('')}<td>${d.totalAprobados}</td><td>${d.totalDesaprobados}</td></tr></tbody></table>
@@ -2026,13 +2058,6 @@ function buildReportHTML(d, customText, chartImages){
 </body></html>`;
 }
 
-const DEFAULT_RECOMENDACIONES = 'Se recomienda que, a partir de los resultados obtenidos, el Decano y las autoridades de la carrera analicen y establezcan estrategias de seguimiento de sus estudiantes en sus respectivos programas de tutoría.';
-const DEFAULT_ACCIONES = [
-  'Mayor difusión de los programas en las sesiones regulares con la participación de docentes de CCBB, área de Admisión, Decanos, directores y tutores de carrera.',
-  'Capacitaciones a los docentes que cubren el perfil de docentes que dictan nivelación.',
-  'Motivar a los estudiantes que deben asistir al programa de nivelación incentivándolos con actividades lúdicas.'
-].join('\n');
-
 function defaultParaCargo(carreraLabel){
   return carreraLabel && carreraLabel !== 'todas las carreras'
     ? `Decano(a) de la Carrera de ${carreraLabel}`
@@ -2042,17 +2067,24 @@ const DEFAULT_DE_CARGO = 'Director(a) del Departamento Académico de Cursos Bás
 
 // Text the user writes in the export modal is kept here so it survives closing/reopening the
 // modal (and across periods) within the same session — it's only reset by "Restaurar textos".
-const reportCustomText = {
-  conclusiones: '', recomendaciones: '', acciones: '',
+// Quién firma el informe (nombre/cargo de "Para"/"De" y la firma-imagen) es lo mismo sin importar
+// qué programa esté activo — no tiene sentido reescribirlo cada vez que se cambia de módulo.
+const reportSignerText = {
   paraNombre: '', paraCargo: '', deNombre: '', deCargo: '',
   firma: '' // data URL de la imagen de firma subida, o '' si no hay
+};
+// Conclusiones/recomendaciones/acciones sí quedan separadas por programa, para que el texto de un
+// informe de Nivelación nunca se mezcle con el de Reforzamiento (ver switchProgram()).
+const reportContentText = {
+  nivelacion: { conclusiones: '', recomendaciones: '', acciones: '' },
+  reforzamiento: { conclusiones: '', recomendaciones: '', acciones: '' }
 };
 
 function showFirmaPreview(){
   const wrap = document.getElementById('firmaPreviewWrap');
   const img = document.getElementById('firmaPreviewImg');
-  if(reportCustomText.firma){
-    img.src = reportCustomText.firma;
+  if(reportSignerText.firma){
+    img.src = reportSignerText.firma;
     wrap.style.display = 'block';
   } else {
     wrap.style.display = 'none';
@@ -2091,7 +2123,7 @@ function buildPreviewTablesHTML(d){
     <h4>% Asistencia por curso</h4>
     <table class="preview-table"><thead><tr><th>Curso</th><th>% Asistencia</th></tr></thead><tbody>${asistRows}</tbody></table>
 
-    <h4>Rendimiento (primeras evaluaciones)</h4>
+    <h4>Rendimiento (${d.programKey === 'nivelacion' ? 'primeras evaluaciones' : 'Aprobado / Desaprobado'})</h4>
     <table class="preview-table"><thead><tr><th rowspan="2">Curso</th>${d.sedes.map(s=>`<th colspan="2">${s}</th>`).join('')}<th colspan="2">Total</th></tr>
       <tr>${d.sedes.map(()=>'<th>Apr.</th><th>Desapr.</th>').join('')}<th>Apr.</th><th>Desapr.</th></tr></thead>
       <tbody>${rendRows}</tbody></table>
@@ -2123,14 +2155,16 @@ function openExportModal(){
 
   document.getElementById('reportPreview').innerHTML = buildPreviewTablesHTML(data);
 
-  document.getElementById('inParaNombre').value = reportCustomText.paraNombre;
-  document.getElementById('inParaCargo').value = reportCustomText.paraCargo || defaultParaCargo(data.carreraLabel);
-  document.getElementById('inDeNombre').value = reportCustomText.deNombre;
-  document.getElementById('inDeCargo').value = reportCustomText.deCargo || DEFAULT_DE_CARGO;
+  const contentText = reportContentText[currentProgram];
 
-  document.getElementById('taConclusiones').value = reportCustomText.conclusiones;
-  document.getElementById('taRecomendaciones').value = reportCustomText.recomendaciones || DEFAULT_RECOMENDACIONES;
-  document.getElementById('taAcciones').value = reportCustomText.acciones || DEFAULT_ACCIONES;
+  document.getElementById('inParaNombre').value = reportSignerText.paraNombre;
+  document.getElementById('inParaCargo').value = reportSignerText.paraCargo || defaultParaCargo(data.carreraLabel);
+  document.getElementById('inDeNombre').value = reportSignerText.deNombre;
+  document.getElementById('inDeCargo').value = reportSignerText.deCargo || DEFAULT_DE_CARGO;
+
+  document.getElementById('taConclusiones').value = contentText.conclusiones;
+  document.getElementById('taRecomendaciones').value = contentText.recomendaciones || activeProgram().defaultRecomendaciones;
+  document.getElementById('taAcciones').value = contentText.acciones || activeProgram().defaultAcciones;
   showFirmaPreview();
 
   document.getElementById('reportModalOverlay').classList.add('open');
@@ -2141,13 +2175,14 @@ function closeExportModal(){
 }
 
 function generateReportFromModal(){
-  reportCustomText.paraNombre = document.getElementById('inParaNombre').value;
-  reportCustomText.paraCargo = document.getElementById('inParaCargo').value;
-  reportCustomText.deNombre = document.getElementById('inDeNombre').value;
-  reportCustomText.deCargo = document.getElementById('inDeCargo').value;
-  reportCustomText.conclusiones = document.getElementById('taConclusiones').value;
-  reportCustomText.recomendaciones = document.getElementById('taRecomendaciones').value;
-  reportCustomText.acciones = document.getElementById('taAcciones').value;
+  reportSignerText.paraNombre = document.getElementById('inParaNombre').value;
+  reportSignerText.paraCargo = document.getElementById('inParaCargo').value;
+  reportSignerText.deNombre = document.getElementById('inDeNombre').value;
+  reportSignerText.deCargo = document.getElementById('inDeCargo').value;
+  const contentText = reportContentText[currentProgram];
+  contentText.conclusiones = document.getElementById('taConclusiones').value;
+  contentText.recomendaciones = document.getElementById('taRecomendaciones').value;
+  contentText.acciones = document.getElementById('taAcciones').value;
 
   const data = openExportModal._data;
   const btn = document.getElementById('btnGenerateReport');
@@ -2159,7 +2194,7 @@ function generateReportFromModal(){
   // this tab becomes a background tab and browsers throttle requestAnimationFrame there, so any
   // chart rendering started afterwards (needed for the screenshots to paint) may never happen.
   const openAndWrite = (chartImages) => {
-    const html = buildReportHTML(data, reportCustomText, chartImages);
+    const html = buildReportHTML(data, {...reportSignerText, ...reportContentText[data.programKey]}, chartImages);
     const w = window.open('', '_blank');
     if(!w){
       alert('El navegador bloqueó la ventana emergente. Habilita las ventanas emergentes para este sitio e inténtalo de nuevo.');
@@ -2326,9 +2361,9 @@ function setupExportModal(){
     document.getElementById('inDeNombre').value = '';
     document.getElementById('inDeCargo').value = DEFAULT_DE_CARGO;
     document.getElementById('taConclusiones').value = '';
-    document.getElementById('taRecomendaciones').value = DEFAULT_RECOMENDACIONES;
-    document.getElementById('taAcciones').value = DEFAULT_ACCIONES;
-    reportCustomText.firma = '';
+    document.getElementById('taRecomendaciones').value = activeProgram().defaultRecomendaciones;
+    document.getElementById('taAcciones').value = activeProgram().defaultAcciones;
+    reportSignerText.firma = '';
     document.getElementById('inFirma').value = '';
     showFirmaPreview();
   });
@@ -2338,14 +2373,14 @@ function setupExportModal(){
     if(!file) return;
     const reader = new FileReader();
     reader.onload = (ev)=>{
-      reportCustomText.firma = ev.target.result;
+      reportSignerText.firma = ev.target.result;
       showFirmaPreview();
     };
     reader.onerror = ()=> alert('No se pudo leer la imagen de firma.');
     reader.readAsDataURL(file);
   });
   document.getElementById('btnQuitarFirma').addEventListener('click', ()=>{
-    reportCustomText.firma = '';
+    reportSignerText.firma = '';
     document.getElementById('inFirma').value = '';
     showFirmaPreview();
   });
