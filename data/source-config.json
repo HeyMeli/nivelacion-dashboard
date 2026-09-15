@@ -1,6 +1,6 @@
 {
   "attendanceUrl": "https://script.google.com/macros/s/AKfycbyHLn_vu4k04AsdR3lWwJaylropyMyIR2Mh5XhJnwXag2wxtrGIegbRd2U-8monssW2/exec",
   "satisfactionUrl": "https://script.google.com/macros/s/AKfycbz2ImMUbsKvF5T2GQLWEy3YUEsDkYUUEIH1XNofnIn4DBkzAbA-t_0iI4Awm_VbQEyBQg/exec",
-  "reforzamientoAttendanceUrl": "",
-  "reforzamientoSatisfactionUrl": ""
+  "reforzamientoAttendanceUrl": "https://script.google.com/macros/s/AKfycbxMVhs1vfs3tY-ng3bwgZ5Z37lpogJgdbOdPgcg9rHwM3G56ZVgyXbyaRqh3pLDAbgD/exec",
+  "reforzamientoSatisfactionUrl": "https://script.google.com/macros/s/AKfycbw41OCxzcZSgLJyxKpsZMZJ900AnunK3fXv9UzW87L6eO2Wfx5uUN6kOUf17umeCppG/exec"
 }
