@@ -34,6 +34,15 @@
 
 <div class="app-shell" id="appShell">
 
+<nav class="sidebar" id="programSwitch">
+  <div class="sidebar-logo">UCSUR</div>
+  <div class="sidebar-title">Programas</div>
+  <button data-program="nivelacion" class="active">📘 Nivelación</button>
+  <button data-program="reforzamiento">📗 Reforzamiento</button>
+</nav>
+
+<div class="app-main">
+
 <header class="top">
   <div class="brand">
     <div class="logo">UCSUR</div>
@@ -41,10 +50,6 @@
       <h1 id="programTitle">Programa de Nivelación</h1>
       <p>Departamento Académico de Cursos Básicos · Universidad Científica del Sur</p>
     </div>
-  </div>
-  <div class="program-switch" id="programSwitch">
-    <button data-program="nivelacion" class="active">Nivelación</button>
-    <button data-program="reforzamiento">Reforzamiento</button>
   </div>
   <div style="display:flex; align-items:center; gap:10px;">
     <div style="font-size:11px;opacity:.85;text-align:right;">
@@ -114,6 +119,10 @@ Sube un archivo por cada semestre (con la columna "Periodo académico" / "Semest
 </div>
 
 <main id="main"></main>
+
+<footer class="foot">Dashboard del Programa de Nivelación · Formatos GIE-DCB-FOR-01 (asistencia/notas) y GIE-DCB-FOR-02 (satisfacción)</footer>
+
+</div><!-- /.app-main -->
 
 <div class="modal-overlay" id="liveConfigModalOverlay">
   <div class="modal-card" style="max-width:640px;">
@@ -215,8 +224,6 @@ Sube un archivo por cada semestre (con la columna "Periodo académico" / "Semest
     </div>
   </div>
 </div>
-
-<footer class="foot">Dashboard del Programa de Nivelación · Formatos GIE-DCB-FOR-01 (asistencia/notas) y GIE-DCB-FOR-02 (satisfacción)</footer>
 
 </div><!-- /#appShell -->
 

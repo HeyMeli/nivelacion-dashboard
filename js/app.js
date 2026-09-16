@@ -188,16 +188,29 @@ async function loadProgramData(programCfg){
 // Carga LOS DOS programas al arrancar (así cambiar de uno a otro después es instantáneo, sin
 // spinner) y activa el contenido del programa que esté seleccionado (currentProgram) en las
 // variables globales de siempre (ATT/SAT/sourceConfig/liveAttOk/liveSatOk).
+// Carga primero el programa activo (currentProgram) — así la pantalla de arranque no depende de
+// lo lenta que esté la fuente en vivo del OTRO programa — y deja el otro cargándose en segundo
+// plano sin bloquear: applyProgramData() activa currentProgram apenas está listo, y el otro se
+// marca PROGRAM_DATA[k].loaded=true cuando termina (switchProgram() lo usa para saber si ya puede
+// mostrarlo o si debe esperar).
 async function loadBaseData(){
-  const keys = Object.keys(PROGRAMS);
-  const results = await Promise.all(keys.map(k => loadProgramData(PROGRAMS[k])));
-  keys.forEach((k, i) => {
-    const r = results[i];
-    PROGRAM_DATA[k] = { att: r.att, sat: r.sat, attSourceName: null, satSourceName: null,
-      sourceConfig: r.sourceConfig, liveAttOk: r.liveAttOk, liveSatOk: r.liveSatOk };
+  const otherKeys = Object.keys(PROGRAMS).filter(k => k !== currentProgram);
+
+  const activeResult = await loadProgramData(PROGRAMS[currentProgram]);
+  PROGRAM_DATA[currentProgram] = { att: activeResult.att, sat: activeResult.sat, attSourceName: null, satSourceName: null,
+    sourceConfig: activeResult.sourceConfig, liveAttOk: activeResult.liveAttOk, liveSatOk: activeResult.liveSatOk, loaded: true };
+  applyProgramData(currentProgram);
+
+  otherKeys.forEach(k => {
+    loadProgramData(PROGRAMS[k]).then(r => {
+      PROGRAM_DATA[k] = { att: r.att, sat: r.sat, attSourceName: null, satSourceName: null,
+        sourceConfig: r.sourceConfig, liveAttOk: r.liveAttOk, liveSatOk: r.liveSatOk, loaded: true };
+      if(currentProgram === k) activateProgramView(k);
+    }).catch(err => {
+      console.error(`No se pudo cargar ${PROGRAMS[k].label} en segundo plano:`, err);
+      PROGRAM_DATA[k].loaded = true; // no se queda esperando para siempre si se cambia a este programa
+    });
   });
-  const d = PROGRAM_DATA[currentProgram];
-  ATT = d.att; SAT = d.sat; sourceConfig = d.sourceConfig; liveAttOk = d.liveAttOk; liveSatOk = d.liveSatOk;
 }
 
 const BLUE = ['#1B6FC9', '#5BB0FF', '#0F3E7A', '#8FC7FF', '#2E86E0', '#B9DBFF'];
@@ -393,28 +406,51 @@ function setupTabs(){
 // globales de siempre — al cambiar de programa se guarda el contenido actual bajo la clave del
 // programa saliente y se restaura el del programa entrante, así el resto del dashboard (filtros,
 // render, exportar informe) no necesita enterarse de que existe más de un programa.
+// `loaded:false` inicial: loadBaseData() carga el programa activo primero y este (el otro) después,
+// en segundo plano — así una fuente en vivo lenta de un programa no retrasa la pantalla de arranque
+// de quien solo quiere ver el otro (ver loadBaseData()/switchProgram() más abajo).
 let PROGRAM_DATA = {
   nivelacion:    { att: [], sat: [], attSourceName: null, satSourceName: null,
-                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false },
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false, loaded:false },
   reforzamiento: { att: [], sat: [], attSourceName: null, satSourceName: null,
-                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false }
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false, loaded:false }
 };
 
-function switchProgram(newKey){
-  if(newKey === currentProgram || !PROGRAMS[newKey]) return;
-  PROGRAM_DATA[currentProgram] = { att: ATT, sat: SAT, attSourceName, satSourceName, sourceConfig, liveAttOk, liveSatOk };
-  currentProgram = newKey;
-  const d = PROGRAM_DATA[newKey];
+// Copia el contenido de PROGRAM_DATA[key] a las variables globales sueltas que usa el resto del
+// dashboard (ATT/SAT/sourceConfig/liveAttOk/liveSatOk) — sin tocar filtros ni volver a dibujar.
+function applyProgramData(key){
+  const d = PROGRAM_DATA[key];
   ATT = d.att; SAT = d.sat; attSourceName = d.attSourceName; satSourceName = d.satSourceName;
   sourceConfig = d.sourceConfig; liveAttOk = d.liveAttOk; liveSatOk = d.liveSatOk;
+}
 
-  document.querySelectorAll('#programSwitch button').forEach(b => b.classList.toggle('active', b.dataset.program === newKey));
+// Aplica los datos de `key` (ya cargados) y refresca todo lo que depende de ellos — usado tanto al
+// cambiar de programa con los datos ya listos, como cuando termina de cargar en segundo plano un
+// programa al que la usuaria ya había cambiado mientras tanto (ver loadBaseData()).
+function activateProgramView(key){
+  applyProgramData(key);
   state.periodo = ''; state.facultad = ''; state.carrera = ''; state.sede = ''; state.curso = [];
   state.periodo = latestPeriod();
   rebuildFilters();
-  updateDataPanelLabels();
   render();
   updateLiveStatusUI();
+}
+
+function switchProgram(newKey){
+  if(newKey === currentProgram || !PROGRAMS[newKey]) return;
+  PROGRAM_DATA[currentProgram] = { att: ATT, sat: SAT, attSourceName, satSourceName, sourceConfig, liveAttOk, liveSatOk, loaded: true };
+  currentProgram = newKey;
+
+  document.querySelectorAll('#programSwitch button').forEach(b => b.classList.toggle('active', b.dataset.program === newKey));
+  updateDataPanelLabels();
+
+  if(!PROGRAM_DATA[newKey].loaded){
+    // Todavía se está cargando en segundo plano — loadBaseData() llama a activateProgramView()
+    // apenas termine, si para entonces seguimos en este programa.
+    document.getElementById('main').innerHTML = `<div class="empty-state">⏳ Cargando datos de ${PROGRAMS[newKey].label}…</div>`;
+    return;
+  }
+  activateProgramView(newKey);
 }
 
 // Relabela el título del header y el panel de subida de Excel según el programa activo.
