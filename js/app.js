@@ -75,6 +75,20 @@ async function fetchLiveRecords(url, parseFn){
   return records;
 }
 
+// Google suele devolver un fallo pasajero (404, o una interstitial anti-bot en vez del CSV) que
+// se resuelve solo si se reintenta unos segundos después — visto muchas veces contra Apps Script
+// en producción. Reintenta antes de darse por vencido y caer al respaldo local, en vez de fallar
+// a la primera.
+async function fetchLiveRecordsWithRetry(url, parseFn, retries = 2, delayMs = 1500){
+  let lastErr;
+  for(let attempt = 0; attempt <= retries; attempt++){
+    if(attempt > 0) await new Promise(r => setTimeout(r, delayMs));
+    try{ return await fetchLiveRecords(url, parseFn); }
+    catch(err){ lastErr = err; }
+  }
+  throw lastErr;
+}
+
 // A live source URL is writable only when it's an Apps Script Web App (README Opción 2) — a
 // Google Sheet "publicado como CSV" (Opción 1) is read-only, so uploads stay browser-local for it.
 function isAppsScriptWriteUrl(url){
@@ -161,8 +175,8 @@ async function loadProgramData(programCfg){
   // Promise.all) porque cada fuente sigue siendo independiente: si una falla, la otra debe seguir
   // su curso y caer a los datos locales por su cuenta.
   const [attResult, satResult] = await Promise.allSettled([
-    sourceConfig.attendanceUrl ? fetchLiveRecords(sourceConfig.attendanceUrl, wb => parseAttendanceWorkbook(wb, programCfg)) : Promise.resolve(null),
-    sourceConfig.satisfactionUrl ? fetchLiveRecords(sourceConfig.satisfactionUrl, wb => parseSatisfactionWorkbook(wb, programCfg)) : Promise.resolve(null)
+    sourceConfig.attendanceUrl ? fetchLiveRecordsWithRetry(sourceConfig.attendanceUrl, wb => parseAttendanceWorkbook(wb, programCfg)) : Promise.resolve(null),
+    sourceConfig.satisfactionUrl ? fetchLiveRecordsWithRetry(sourceConfig.satisfactionUrl, wb => parseSatisfactionWorkbook(wb, programCfg)) : Promise.resolve(null)
   ]);
 
   if(sourceConfig.attendanceUrl){
@@ -176,26 +190,34 @@ async function loadProgramData(programCfg){
 
   if(!liveAttOk || !liveSatOk){
     // Antes de caer al JSON de fábrica del repo, revisa si ESTE programa tiene un autoguardado más
-    // reciente en IndexedDB de una sesión anterior en este navegador (ver saveSnapshot()) — solo
-    // cuando NINGUNA fuente en vivo funcionó, igual que hacía initApp() antes de generalizarse a
-    // los dos programas: si alguna fuente en vivo sí respondió, esa es la verdad compartida
-    // vigente y no debe taparse con lo que había guardado localmente.
-    if(!liveAttOk && !liveSatOk){
-      const snapshot = await loadSnapshot(programCfg);
-      if(snapshot && Array.isArray(snapshot.att) && snapshot.att.length){
-        att = snapshot.att;
-        sat = Array.isArray(snapshot.sat) ? snapshot.sat : [];
-        loadedFromSnapshot = true;
-        snapshotSavedAt = snapshot.savedAt || null;
-      }
+    // reciente en IndexedDB de una sesión anterior en este navegador (ver saveSnapshot()) — por
+    // CAMPO, no en bloque: si asistencia falló en vivo pero satisfacción sí respondió, igual hay
+    // que revisar si hay un autoguardado de asistencia (más útil que el JSON vacío de fábrica),
+    // sin tocar la satisfacción que sí llegó en vivo. Antes esto solo se revisaba cuando las DOS
+    // fuentes fallaban a la vez, así que un fallo intermitente de una sola (frecuente con Apps
+    // Script) tapaba el autoguardado real con el JSON vacío del repo.
+    const snapshot = await loadSnapshot(programCfg);
+    const hasSnapshot = snapshot && Array.isArray(snapshot.att) && snapshot.att.length;
+    if(!liveAttOk && hasSnapshot){
+      att = snapshot.att;
+      loadedFromSnapshot = true;
+      snapshotSavedAt = snapshot.savedAt || null;
     }
-    if(!loadedFromSnapshot){
+    if(!liveSatOk && hasSnapshot){
+      sat = Array.isArray(snapshot.sat) ? snapshot.sat : [];
+      loadedFromSnapshot = true;
+      snapshotSavedAt = snapshotSavedAt || snapshot.savedAt || null;
+    }
+
+    const needAttFallback = !liveAttOk && !hasSnapshot;
+    const needSatFallback = !liveSatOk && !hasSnapshot;
+    if(needAttFallback || needSatFallback){
       const [attRes, satRes] = await Promise.all([
-        liveAttOk ? null : fetch(programCfg.localFallback.attendance),
-        liveSatOk ? null : fetch(programCfg.localFallback.satisfaction)
+        needAttFallback ? fetch(programCfg.localFallback.attendance) : null,
+        needSatFallback ? fetch(programCfg.localFallback.satisfaction) : null
       ]);
-      if(!liveAttOk){ att = (attRes && attRes.ok) ? await attRes.json() : []; }
-      if(!liveSatOk){ sat = (satRes && satRes.ok) ? await satRes.json() : []; }
+      if(needAttFallback){ att = (attRes && attRes.ok) ? await attRes.json() : []; }
+      if(needSatFallback){ sat = (satRes && satRes.ok) ? await satRes.json() : []; }
     }
   }
 
