@@ -47,17 +47,26 @@ async function loadSourceConfig(programCfg){
 // column-matching parser used for uploaded Excel files — so a live Google Sheet just needs the
 // same header row (ID, Apellidos y Nombres, Carrera... / Carrera, Semestre, Curso, P1...) as the
 // official Excel formats.
-async function fetchLiveRecords(url, parseFn){
+async function fetchLiveRecords(url, parseFn, timeoutMs = 12000){
   const sep = url.includes('?') ? '&' : '?';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try{
-    res = await fetch(url + sep + '_ts=' + Date.now(), { cache: 'no-store' });
+    res = await fetch(url + sep + '_ts=' + Date.now(), { cache: 'no-store', signal: controller.signal });
   }catch(err){
+    // Un AbortError (por el timeout) y un "Failed to fetch" (CORS/DNS) se ven distinto para no
+    // culpar a un bloqueo de red cuando en realidad la fuente solo está respondiendo muy lento —
+    // ver fetchLiveRecordsWithRetry(), que necesita distinguirlos para decidir si vale la pena
+    // reintentar.
+    if(err.name === 'AbortError') throw new Error(`La fuente tardó más de ${Math.round(timeoutMs/1000)}s en responder (tiempo agotado).`);
     // A generic "Failed to fetch" TypeError is what browsers throw for both CORS blocks and
     // network/DNS failures, without exposing which one for security reasons — this is the most
     // common failure mode when someone forgets to set the sheet to "Anyone with the link", so we
     // point at that first since it's the most fixable and most likely cause.
     throw new Error('No se pudo conectar (posible bloqueo CORS o la hoja no es pública). Revisa que esté compartida como "Cualquiera con el enlace puede ver", o usa el método de Apps Script del README.');
+  }finally{
+    clearTimeout(timer);
   }
   if(!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
@@ -79,7 +88,10 @@ async function fetchLiveRecords(url, parseFn){
 // se resuelve solo si se reintenta unos segundos después — visto muchas veces contra Apps Script
 // en producción. Reintenta antes de darse por vencido y caer al respaldo local, en vez de fallar
 // a la primera.
-async function fetchLiveRecordsWithRetry(url, parseFn, retries = 2, delayMs = 1500){
+// Un solo reintento (no más): con el timeout de 12s por intento (ver fetchLiveRecords), el peor
+// caso ya son ~25s — con más reintentos, una fuente genuinamente lenta (no solo fallando rápido)
+// podía superar el minuto de espera antes de caer al respaldo local.
+async function fetchLiveRecordsWithRetry(url, parseFn, retries = 1, delayMs = 1500){
   let lastErr;
   for(let attempt = 0; attempt <= retries; attempt++){
     if(attempt > 0) await new Promise(r => setTimeout(r, delayMs));
