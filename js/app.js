@@ -6,6 +6,7 @@ let SAT = [];
 let attSourceName = null; // filename of last uploaded attendance file, or null = original
 let satSourceName = null;
 let loadedFromSnapshot = false; // true if ATT/SAT were restored from this browser's autosave at init
+let snapshotSavedAt = null; // ISO date string of that autosave, or null
 
 // "Live" source: data/source-config.json holds two URLs (Google Sheets published as CSV, or an
 // Apps Script Web App — see README) that, when set, are fetched fresh every time ANYONE opens the
@@ -154,7 +155,7 @@ async function clearSheetViaAppsScript(url){
 // poder cargar los dos programas a la vez al arrancar, sin que uno pise al otro.
 async function loadProgramData(programCfg){
   const sourceConfig = await loadSourceConfig(programCfg);
-  let att = [], sat = [], liveAttOk = false, liveSatOk = false;
+  let att = [], sat = [], liveAttOk = false, liveSatOk = false, loadedFromSnapshot = false, snapshotSavedAt = null;
 
   // Pide las dos fuentes en vivo al mismo tiempo, no una tras otra. Promise.allSettled (no
   // Promise.all) porque cada fuente sigue siendo independiente: si una falla, la otra debe seguir
@@ -174,15 +175,31 @@ async function loadProgramData(programCfg){
   }
 
   if(!liveAttOk || !liveSatOk){
-    const [attRes, satRes] = await Promise.all([
-      liveAttOk ? null : fetch(programCfg.localFallback.attendance),
-      liveSatOk ? null : fetch(programCfg.localFallback.satisfaction)
-    ]);
-    if(!liveAttOk){ att = (attRes && attRes.ok) ? await attRes.json() : []; }
-    if(!liveSatOk){ sat = (satRes && satRes.ok) ? await satRes.json() : []; }
+    // Antes de caer al JSON de fábrica del repo, revisa si ESTE programa tiene un autoguardado más
+    // reciente en IndexedDB de una sesión anterior en este navegador (ver saveSnapshot()) — solo
+    // cuando NINGUNA fuente en vivo funcionó, igual que hacía initApp() antes de generalizarse a
+    // los dos programas: si alguna fuente en vivo sí respondió, esa es la verdad compartida
+    // vigente y no debe taparse con lo que había guardado localmente.
+    if(!liveAttOk && !liveSatOk){
+      const snapshot = await loadSnapshot(programCfg);
+      if(snapshot && Array.isArray(snapshot.att) && snapshot.att.length){
+        att = snapshot.att;
+        sat = Array.isArray(snapshot.sat) ? snapshot.sat : [];
+        loadedFromSnapshot = true;
+        snapshotSavedAt = snapshot.savedAt || null;
+      }
+    }
+    if(!loadedFromSnapshot){
+      const [attRes, satRes] = await Promise.all([
+        liveAttOk ? null : fetch(programCfg.localFallback.attendance),
+        liveSatOk ? null : fetch(programCfg.localFallback.satisfaction)
+      ]);
+      if(!liveAttOk){ att = (attRes && attRes.ok) ? await attRes.json() : []; }
+      if(!liveSatOk){ sat = (satRes && satRes.ok) ? await satRes.json() : []; }
+    }
   }
 
-  return { att, sat, sourceConfig, liveAttOk, liveSatOk };
+  return { att, sat, sourceConfig, liveAttOk, liveSatOk, loadedFromSnapshot, snapshotSavedAt };
 }
 
 // Carga LOS DOS programas al arrancar (así cambiar de uno a otro después es instantáneo, sin
@@ -198,13 +215,15 @@ async function loadBaseData(){
 
   const activeResult = await loadProgramData(PROGRAMS[currentProgram]);
   PROGRAM_DATA[currentProgram] = { att: activeResult.att, sat: activeResult.sat, attSourceName: null, satSourceName: null,
-    sourceConfig: activeResult.sourceConfig, liveAttOk: activeResult.liveAttOk, liveSatOk: activeResult.liveSatOk, loaded: true };
+    sourceConfig: activeResult.sourceConfig, liveAttOk: activeResult.liveAttOk, liveSatOk: activeResult.liveSatOk,
+    loadedFromSnapshot: activeResult.loadedFromSnapshot, snapshotSavedAt: activeResult.snapshotSavedAt, loaded: true };
   applyProgramData(currentProgram);
 
   otherKeys.forEach(k => {
     loadProgramData(PROGRAMS[k]).then(r => {
       PROGRAM_DATA[k] = { att: r.att, sat: r.sat, attSourceName: null, satSourceName: null,
-        sourceConfig: r.sourceConfig, liveAttOk: r.liveAttOk, liveSatOk: r.liveSatOk, loaded: true };
+        sourceConfig: r.sourceConfig, liveAttOk: r.liveAttOk, liveSatOk: r.liveSatOk,
+        loadedFromSnapshot: r.loadedFromSnapshot, snapshotSavedAt: r.snapshotSavedAt, loaded: true };
       if(currentProgram === k) activateProgramView(k);
     }).catch(err => {
       console.error(`No se pudo cargar ${PROGRAMS[k].label} en segundo plano:`, err);
@@ -411,9 +430,11 @@ function setupTabs(){
 // de quien solo quiere ver el otro (ver loadBaseData()/switchProgram() más abajo).
 let PROGRAM_DATA = {
   nivelacion:    { att: [], sat: [], attSourceName: null, satSourceName: null,
-                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false, loaded:false },
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false,
+                   loadedFromSnapshot:false, snapshotSavedAt:null, loaded:false },
   reforzamiento: { att: [], sat: [], attSourceName: null, satSourceName: null,
-                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false, loaded:false }
+                   sourceConfig: { attendanceUrl:'', satisfactionUrl:'' }, liveAttOk:false, liveSatOk:false,
+                   loadedFromSnapshot:false, snapshotSavedAt:null, loaded:false }
 };
 
 // Copia el contenido de PROGRAM_DATA[key] a las variables globales sueltas que usa el resto del
@@ -422,6 +443,7 @@ function applyProgramData(key){
   const d = PROGRAM_DATA[key];
   ATT = d.att; SAT = d.sat; attSourceName = d.attSourceName; satSourceName = d.satSourceName;
   sourceConfig = d.sourceConfig; liveAttOk = d.liveAttOk; liveSatOk = d.liveSatOk;
+  loadedFromSnapshot = d.loadedFromSnapshot; snapshotSavedAt = d.snapshotSavedAt;
 }
 
 // Aplica los datos de `key` (ya cargados) y refresca todo lo que depende de ellos — usado tanto al
@@ -432,13 +454,14 @@ function activateProgramView(key){
   state.periodo = ''; state.facultad = ''; state.carrera = ''; state.sede = ''; state.curso = [];
   state.periodo = latestPeriod();
   rebuildFilters();
+  refreshDataPanelStatus();
   render();
   updateLiveStatusUI();
 }
 
 function switchProgram(newKey){
   if(newKey === currentProgram || !PROGRAMS[newKey]) return;
-  PROGRAM_DATA[currentProgram] = { att: ATT, sat: SAT, attSourceName, satSourceName, sourceConfig, liveAttOk, liveSatOk, loaded: true };
+  PROGRAM_DATA[currentProgram] = { att: ATT, sat: SAT, attSourceName, satSourceName, sourceConfig, liveAttOk, liveSatOk, loadedFromSnapshot, snapshotSavedAt, loaded: true };
   currentProgram = newKey;
 
   document.querySelectorAll('#programSwitch button').forEach(b => b.classList.toggle('active', b.dataset.program === newKey));
@@ -1622,9 +1645,13 @@ async function saveSnapshot(){
   }
 }
 
-async function loadSnapshot(){
+// Recibe programCfg explícito (no activeProgram()) porque loadProgramData() la llama también para
+// el programa que se está cargando en SEGUNDO PLANO (ver loadBaseData()), momento en el que
+// activeProgram() todavía apunta al programa activo (el otro) — usar ese habría revisado la
+// clave de autoguardado equivocada.
+async function loadSnapshot(programCfg){
   if(!autosaveEnabled) return null;
-  try{ return await idbGetKey(activeProgram().idbKey); }
+  try{ return await idbGetKey(programCfg.idbKey); }
   catch(err){ console.error('Autoload failed:', err); return null; }
 }
 
@@ -1715,6 +1742,34 @@ async function handleFile(inputEl, statusId, parseFn, onSuccess, summaryFn, rawP
   setFileStatus(statusId, lines.join(' · '), anyOk ? 'ok' : 'err');
 }
 
+// Refleja en el panel de datos (contador de registros junto a cada archivo + el mensaje de
+// autoguardado de abajo) el estado del programa ACTUALMENTE activo — se llama al arrancar y cada
+// vez que se cambia de programa o termina de cargar uno en segundo plano (activateProgramView()),
+// para que ese texto nunca se quede mostrando el estado del programa anterior.
+function refreshDataPanelStatus(){
+  const attLabel = loadedFromSnapshot ? `${ATT.length} registros (restaurados del autoguardado)` : `${ATT.length} registros (datos originales)`;
+  const satLabel = loadedFromSnapshot ? `${SAT.length} registros (restaurados del autoguardado)` : `${SAT.length} registros (datos originales)`;
+  setFileStatus('attStatus', attLabel, loadedFromSnapshot ? 'ok' : '');
+  setFileStatus('satStatus', satLabel, loadedFromSnapshot ? 'ok' : '');
+
+  const anyLiveOk = liveAttOk || liveSatOk;
+  if(anyLiveOk){
+    // Live data loaded successfully — this is the current shared truth, so it takes priority
+    // over any older personal autosave snapshot (which could otherwise mask live updates).
+    const parts = [];
+    if(sourceConfig.attendanceUrl) parts.push(liveAttOk ? 'asistencia ✓' : 'asistencia (respaldo local)');
+    if(sourceConfig.satisfactionUrl) parts.push(liveSatOk ? 'satisfacción ✓' : 'satisfacción (respaldo local)');
+    setAutosaveStatus(`🔴 Datos en vivo cargados (${parts.join(', ')}). Los cambios que subas aquí seguirán autoguardándose solo en este navegador.`, 'ok');
+  } else if(loadedFromSnapshot){
+    const when = snapshotSavedAt ? new Date(snapshotSavedAt).toLocaleString('es-PE', { dateStyle:'short', timeStyle:'short' }) : '';
+    setAutosaveStatus(`💾 Datos restaurados automáticamente de tu última sesión en este navegador${when ? ' (' + when + ')' : ''}.`, 'ok');
+  } else if(autosaveEnabled){
+    setAutosaveStatus('Los cambios se guardarán automáticamente en este navegador.', '');
+  } else {
+    setAutosaveStatus('⚠️ Este navegador no admite autoguardado — recuerda no cerrar la pestaña sin haber guardado los cambios en la fuente en vivo.', 'err');
+  }
+}
+
 function setupDataPanel(){
   const fileAtt = document.getElementById('fileAtt');
   const fileSat = document.getElementById('fileSat');
@@ -1789,10 +1844,7 @@ function setupDataPanel(){
     afterDataChange();
   });
 
-  const attLabel = loadedFromSnapshot ? `${ATT.length} registros (restaurados del autoguardado)` : `${ATT.length} registros (datos originales)`;
-  const satLabel = loadedFromSnapshot ? `${SAT.length} registros (restaurados del autoguardado)` : `${SAT.length} registros (datos originales)`;
-  setFileStatus('attStatus', attLabel, loadedFromSnapshot ? 'ok' : '');
-  setFileStatus('satStatus', satLabel, loadedFromSnapshot ? 'ok' : '');
+  refreshDataPanelStatus();
 }
 
 // ============ EXPORT REPORT ============
@@ -2462,30 +2514,9 @@ async function initApp(){
     return;
   }
 
-  const anyLiveOk = liveAttOk || liveSatOk;
-
-  if(anyLiveOk){
-    // Live data loaded successfully — this is the current shared truth, so it takes priority
-    // over any older personal autosave snapshot (which could otherwise mask live updates).
-    const parts = [];
-    if(sourceConfig.attendanceUrl) parts.push(liveAttOk ? 'asistencia ✓' : 'asistencia (respaldo local)');
-    if(sourceConfig.satisfactionUrl) parts.push(liveSatOk ? 'satisfacción ✓' : 'satisfacción (respaldo local)');
-    setAutosaveStatus(`🔴 Datos en vivo cargados (${parts.join(', ')}). Los cambios que subas aquí seguirán autoguardándose solo en este navegador.`, 'ok');
-  } else {
-    const snapshot = await loadSnapshot();
-    if(snapshot && Array.isArray(snapshot.att) && snapshot.att.length){
-      ATT = snapshot.att;
-      SAT = Array.isArray(snapshot.sat) ? snapshot.sat : [];
-      loadedFromSnapshot = true;
-      const when = snapshot.savedAt ? new Date(snapshot.savedAt).toLocaleString('es-PE', { dateStyle:'short', timeStyle:'short' }) : '';
-      setAutosaveStatus(`💾 Datos restaurados automáticamente de tu última sesión en este navegador${when ? ' (' + when + ')' : ''}.`, 'ok');
-    } else if(autosaveEnabled){
-      setAutosaveStatus('Los cambios se guardarán automáticamente en este navegador.', '');
-    } else {
-      setAutosaveStatus('⚠️ Este navegador no admite autoguardado — recuerda no cerrar la pestaña sin haber guardado los cambios en la fuente en vivo.', 'err');
-    }
-  }
-
+  // El estado de "restaurado del autoguardado" / "en vivo" / etc. de ATT/SAT (el programa activo
+  // al arrancar) ya lo resolvió loadProgramData() dentro de loadBaseData() — setupDataPanel() (más
+  // abajo) lo refleja en pantalla vía refreshDataPanelStatus().
   state.periodo = latestPeriod();
   rebuildFilters();
   setupTabs();
