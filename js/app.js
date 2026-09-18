@@ -457,6 +457,21 @@ function activateProgramView(key){
   refreshDataPanelStatus();
   render();
   updateLiveStatusUI();
+  setUploadControlsEnabled(true);
+}
+
+// Deshabilita el panel de subida de Excel (y "Limpiar información") mientras el programa activo
+// todavía se está cargando en segundo plano — evita el bug real que corrompió la Sheet de
+// Nivelación: si se subía un archivo justo en esa ventana, se PARSEABA con el programa nuevo
+// (activeProgram() ya había cambiado) pero se ESCRIBÍA en la URL del programa VIEJO (sourceConfig
+// global todavía no se había actualizado, porque applyProgramData() no corría hasta que terminara
+// de cargar). Ver switchProgram(): ahora applyProgramData() corre de inmediato al cambiar, así que
+// esto es un blindaje adicional, no la única defensa.
+function setUploadControlsEnabled(enabled){
+  ['fileAtt','fileSat','btnClearData'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.disabled = !enabled;
+  });
 }
 
 function switchProgram(newKey){
@@ -466,10 +481,15 @@ function switchProgram(newKey){
 
   document.querySelectorAll('#programSwitch button').forEach(b => b.classList.toggle('active', b.dataset.program === newKey));
   updateDataPanelLabels();
+  // Siempre se aplica de inmediato, incluso si PROGRAM_DATA[newKey] todavía es el estado vacío
+  // inicial — así sourceConfig/ATT/SAT nunca quedan desincronizados de currentProgram/
+  // activeProgram(), pase lo que pase mientras se termina de cargar en segundo plano.
+  applyProgramData(newKey);
 
   if(!PROGRAM_DATA[newKey].loaded){
     // Todavía se está cargando en segundo plano — loadBaseData() llama a activateProgramView()
     // apenas termine, si para entonces seguimos en este programa.
+    setUploadControlsEnabled(false);
     document.getElementById('main').innerHTML = `<div class="empty-state">⏳ Cargando datos de ${PROGRAMS[newKey].label}…</div>`;
     return;
   }
