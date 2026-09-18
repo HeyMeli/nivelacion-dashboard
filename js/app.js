@@ -1795,7 +1795,19 @@ function refreshDataPanelStatus(){
     const parts = [];
     if(sourceConfig.attendanceUrl) parts.push(liveAttOk ? 'asistencia ✓' : 'asistencia (respaldo local)');
     if(sourceConfig.satisfactionUrl) parts.push(liveSatOk ? 'satisfacción ✓' : 'satisfacción (respaldo local)');
-    setAutosaveStatus(`🔴 Datos en vivo cargados (${parts.join(', ')}). Los cambios que subas aquí seguirán autoguardándose solo en este navegador.`, 'ok');
+
+    // La URL en vivo puede o no admitir escritura compartida (ver isAppsScriptWriteUrl) — decirle
+    // a todo el mundo "solo se guarda en este navegador" sin más era incorrecto cuando SÍ está
+    // configurado un Apps Script (la subida de un Excel sí se comparte, ver handleFile()).
+    const attShared = isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
+    const satShared = isAppsScriptWriteUrl(sourceConfig.satisfactionUrl);
+    let shareNote;
+    if(attShared && satShared) shareNote = 'Los cambios que subas aquí (asistencia y satisfacción) se comparten con todo el equipo.';
+    else if(attShared) shareNote = 'Los cambios de asistencia que subas aquí se comparten con todo el equipo; los de satisfacción solo se guardan en este navegador.';
+    else if(satShared) shareNote = 'Los cambios de satisfacción que subas aquí se comparten con todo el equipo; los de asistencia solo se guardan en este navegador.';
+    else shareNote = 'Los cambios que subas aquí seguirán autoguardándose solo en este navegador (la fuente en vivo configurada no admite escritura compartida).';
+
+    setAutosaveStatus(`🔴 Datos en vivo cargados (${parts.join(', ')}). ${shareNote}`, 'ok');
   } else if(loadedFromSnapshot){
     const when = snapshotSavedAt ? new Date(snapshotSavedAt).toLocaleString('es-PE', { dateStyle:'short', timeStyle:'short' }) : '';
     setAutosaveStatus(`💾 Datos restaurados automáticamente de tu última sesión en este navegador${when ? ' (' + when + ')' : ''}.`, 'ok');
