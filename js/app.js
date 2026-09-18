@@ -776,17 +776,31 @@ function renderParticipantes(main, rows){
   const estudiantesParticipantes = participantesRows.length;
   const estudiantesNoPart = matriculas - estudiantesParticipantes;
   const retirados = computeRetirados(rows);
-  const noMatriculados = computeNoMatriculados(rows);
 
   const kpis = el('div',{class:'grid kpi-row'});
-  kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
-  kpis.appendChild(kpi('Matriculados', matriculas));
-  kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
-  kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
-  kpis.appendChild(kpi('Retirados del programa', retirados));
-  kpis.appendChild(kpi('No matriculados', noMatriculados));
-  main.appendChild(kpis);
-  main.appendChild(el('div',{class:'note'}, '* "Retirados del programa" y "No matriculados" requieren un campo de estado que el formato actual no registra; se muestran en 0 hasta que esa columna esté disponible.'));
+  if(programCfg.key === 'reforzamiento'){
+    // A pedido: acá el orden pone primero las cifras de matrícula/participación (las que
+    // más se consultan) y deja "Nro de estudiantes" al final; "No matriculados" no aplica
+    // a Reforzamiento (no hay forma de saber quién no se matriculó desde este formato), así
+    // que se omite en vez de mostrar un 0 que no significa nada.
+    kpis.appendChild(kpi('Matriculados', matriculas));
+    kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
+    kpis.appendChild(kpi('Retirados del programa', retirados));
+    main.appendChild(kpis);
+    main.appendChild(el('div',{class:'note'}, '* "Retirados del programa" requiere un campo de estado que el formato actual no registra; se muestra en 0 hasta que esa columna esté disponible.'));
+  } else {
+    const noMatriculados = computeNoMatriculados(rows);
+    kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
+    kpis.appendChild(kpi('Matriculados', matriculas));
+    kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Retirados del programa', retirados));
+    kpis.appendChild(kpi('No matriculados', noMatriculados));
+    main.appendChild(kpis);
+    main.appendChild(el('div',{class:'note'}, '* "Retirados del programa" y "No matriculados" requieren un campo de estado que el formato actual no registra; se muestran en 0 hasta que esa columna esté disponible.'));
+  }
 
   const grid1 = grid('1.3fr 1fr');
   grid1.appendChild(chartCard('Participación de estudiantes por curso', 'p_curso'));
