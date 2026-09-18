@@ -1344,6 +1344,34 @@ function renameCursoNivelacion(v){
   return normHeader(v) || null;
 }
 
+function stripAccents(s){
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+// Reforzamiento: el formato de asistencia (GIE-DCB-FOR-05) abrevia los nombres de carrera y el de
+// satisfacción (GIE-DCB-FOR-06) los escribe completos — sin esto, filtrar por carrera no encontraba
+// las encuestas de satisfacción aunque sí existieran para esa carrera, porque el texto no coincidía
+// exactamente. Mapea cada variante conocida a la forma que usa el archivo de asistencia (el que
+// alimenta el selector de "Carrera" del dashboard — ver rebuildFilters()). Confirmado con la
+// usuaria (2026-09-19); "Ingeniería Agroforestal" se dejó fuera a propósito — es un problema real de
+// datos que ella va a resolver con el área usuaria, no una simple variante de escritura.
+const CARRERA_ALIASES_REFORZAMIENTO = {
+  'ADMINISTRACION DE EMPRESAS': 'Administracion de Empresas',
+  'ADMINISTRACION DE NEGOCIOS INTERNACIONALES': 'Adm. Negocios Internacionales',
+  'ARQUITECTURA Y URBANISMO AMBIENTAL': 'Arquitectura y Urb Ambiental',
+  'INGENIERIA ECONOMICA Y DE NEGOCIOS': 'Ing. Económica y de Negocios',
+  'INGENIERIA EMPRESARIAL Y DE SISTEMAS': 'Ing. Empresarial y de Sistemas',
+  'MEDICINA VETERINARIA Y ZOOTECNIA': 'Medic Veterinaria y Zootecnia',
+  'TURISMO SOSTENIBLE Y HOTELERIA': 'Adm Hotelera y Turismo'
+};
+
+function renameCarreraReforzamiento(v){
+  const s = normHeader(v);
+  if(!s) return null;
+  const key = stripAccents(s).toUpperCase();
+  return CARRERA_ALIASES_REFORZAMIENTO[key] || s;
+}
+
 // Finds the row index (0-based) of the header row in a raw matrix, i.e. the first row
 // that contains ALL of the given normalized header labels.
 function findHeaderRow(matrix, requiredHeaders){
@@ -1422,7 +1450,7 @@ function parseAttendanceWorkbook(workbook, programCfg){
     const rec = {
       id: parseInt(idVal, 10),
       nombre: normHeader(get('nombre')) || null,
-      carrera: normHeader(get('carrera')) || null,
+      carrera: programCfg.carreraNormalize(get('carrera')),
       facultad: normHeader(get('facultad')) || null,
       sede: normHeader(get('sede')) || null,
       seccion: normHeader(get('seccion')) || null,
@@ -1481,7 +1509,7 @@ function parseSatisfactionWorkbook(workbook, programCfg){
     const get = (f) => cols[f] !== -1 && cols[f] != null ? row[cols[f]] : null;
 
     const rec = {
-      carrera: normHeader(get('carrera')) || null,
+      carrera: programCfg.carreraNormalize(get('carrera')),
       ciclo: get('ciclo') ?? null,
       periodo: normHeader(get('periodo')) || null,
       sede: normHeader(get('sede')) || null,
@@ -1538,6 +1566,7 @@ const PROGRAMS = {
     attRequired: ATT_REQUIRED_NIVELACION,
     satFieldDefs: SAT_FIELD_DEFS, satRequired: SAT_REQUIRED, // compartidos entre ambos programas
     cursoNormalize: renameCursoNivelacion,
+    carreraNormalize: (v) => normHeader(v) || null, // sin reportes de mismatch en Nivelación por ahora
     cursoColumnHeader: 'Curso a nivelar',
     sesionKeys: ['s1','s2','s3','s4','s5','s6','s7'],
     sesionesDictadas: 4,
@@ -1577,6 +1606,9 @@ const PROGRAMS = {
     // Los cursos ya vienen con nombre propio y bien escritos en el Excel (Álgebra, Física,
     // Biología...) — a diferencia de Nivelación, acá no hace falta ninguna tabla de reemplazo.
     cursoNormalize: (v) => normHeader(v) || null,
+    // Ver renameCarreraReforzamiento(): asistencia y satisfacción escriben algunas carreras
+    // distinto (uno abrevia, el otro no) — esto las hace calzar bajo el mismo nombre.
+    carreraNormalize: renameCarreraReforzamiento,
     cursoColumnHeader: 'Curso a reforzar',
     sesionKeys: ['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'], // van 10 dictadas este ciclo
     sesionesDictadas: 10,
