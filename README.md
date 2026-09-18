@@ -108,15 +108,11 @@ más confiable porque tú controlas la respuesta.
 1. Crea tu Google Sheet con las mismas columnas que el Excel oficial (puedes copiar/pegar
    el contenido de un GIE-DCB-FOR-01/02 directamente en una hoja nueva).
 2. Consigue una URL pública siguiendo la **Opción 1** o la **Opción 2** de abajo.
-3. Abre el dashboard → botón **⚙️** (arriba a la derecha) → pega la(s) URL(s) →
-   **🔎 Probar conexión**.
-4. Si dice "✓ Conectado", copia el JSON que aparece y súbelo como
-   `data/source-config.json` al repositorio (a mano en github.com, o con git — una sola vez).
-5. Listo: desde ahora, todo el equipo que abra el link consulta la hoja en vivo. El ícono
+3. Pega esa URL en `data/source-config.json` (`attendanceUrl`/`satisfactionUrl` para
+   Nivelación, `reforzamientoAttendanceUrl`/`reforzamientoSatisfactionUrl` para Reforzamiento)
+   y súbelo al repositorio (a mano en github.com, o con git — una sola vez).
+4. Listo: desde ahora, todo el equipo que abra el link consulta la hoja en vivo. El ícono
    🔄 en el encabezado permite forzar una actualización sin recargar toda la página.
-
-Si solo quieres probar antes de hacerlo oficial, usa **"💾 Guardar solo para mí"** en vez
-de subirlo al repo — queda guardado solo en tu navegador para que lo pruebes primero.
 
 ### Opción 1 — Google Sheet publicada como CSV (más simple, pruébala primero)
 

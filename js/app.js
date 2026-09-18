@@ -502,9 +502,11 @@ function updateDataPanelLabels(){
   const title = document.getElementById('programTitle');
   const attLabel = document.getElementById('lblFileAtt');
   const satLabel = document.getElementById('lblFileSat');
+  const footer = document.getElementById('pageFooter');
   if(title) title.textContent = `Programa de ${p.label}`;
   if(attLabel) attLabel.textContent = `Asistencia y calificaciones · ${p.formatCodes.attendance}`;
   if(satLabel) satLabel.textContent = `Satisfacción · ${p.formatCodes.satisfaction}`;
+  if(footer) footer.textContent = `Dashboard del Programa de ${p.label} · Formatos ${p.formatCodes.attendance} (asistencia/notas) y ${p.formatCodes.satisfaction} (satisfacción)`;
 }
 
 // Usado mientras se generan capturas de pantalla del informe (captureTabScreenshots recorre las
@@ -2386,94 +2388,7 @@ async function refreshLiveData(){
   }
 }
 
-function openLiveConfigModal(){
-  document.getElementById('liveAttUrl').value = sourceConfig.attendanceUrl || '';
-  document.getElementById('liveSatUrl').value = sourceConfig.satisfactionUrl || '';
-  document.getElementById('liveAttTestResult').textContent = '';
-  document.getElementById('liveAttTestResult').className = 'dp-file-status';
-  document.getElementById('liveSatTestResult').textContent = '';
-  document.getElementById('liveSatTestResult').className = 'dp-file-status';
-  document.getElementById('liveConfigCommitBlock').style.display = 'none';
-  document.getElementById('liveConfigModalOverlay').classList.add('open');
-}
-function closeLiveConfigModal(){
-  document.getElementById('liveConfigModalOverlay').classList.remove('open');
-}
-
-async function testLiveConfig(){
-  const attUrl = document.getElementById('liveAttUrl').value.trim();
-  const satUrl = document.getElementById('liveSatUrl').value.trim();
-  const attResultEl = document.getElementById('liveAttTestResult');
-  const satResultEl = document.getElementById('liveSatTestResult');
-  const testBtn = document.getElementById('btnTestLiveConfig');
-
-  testBtn.disabled = true;
-  testBtn.textContent = '⏳ Probando…';
-
-  let attOk = !attUrl, satOk = !satUrl; // no URL entered counts as "not attempted", not a failure
-  if(attUrl){
-    attResultEl.textContent = 'Probando…'; attResultEl.className = 'dp-file-status';
-    try{
-      const records = await fetchLiveRecords(attUrl, wb => parseAttendanceWorkbook(wb, activeProgram()));
-      attResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
-      attResultEl.className = 'dp-file-status ok';
-      attOk = true;
-    }catch(err){
-      attResultEl.textContent = `✗ ${err.message}`;
-      attResultEl.className = 'dp-file-status err';
-    }
-  }
-  if(satUrl){
-    satResultEl.textContent = 'Probando…'; satResultEl.className = 'dp-file-status';
-    try{
-      const records = await fetchLiveRecords(satUrl, wb => parseSatisfactionWorkbook(wb, activeProgram()));
-      satResultEl.textContent = `✓ Conectado — ${records.length} registros encontrados`;
-      satResultEl.className = 'dp-file-status ok';
-      satOk = true;
-    }catch(err){
-      satResultEl.textContent = `✗ ${err.message}`;
-      satResultEl.className = 'dp-file-status err';
-    }
-  }
-
-  testBtn.disabled = false;
-  testBtn.textContent = '🔎 Probar conexión';
-
-  const commitBlock = document.getElementById('liveConfigCommitBlock');
-  if(attOk && satOk && (attUrl || satUrl)){
-    const json = JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }, null, 2);
-    document.getElementById('liveConfigJsonOutput').value = json;
-    commitBlock.style.display = 'block';
-  } else {
-    commitBlock.style.display = 'none';
-  }
-}
-
-function saveLiveConfigLocally(){
-  const attUrl = document.getElementById('liveAttUrl').value.trim();
-  const satUrl = document.getElementById('liveSatUrl').value.trim();
-  try{
-    localStorage.setItem(activeProgram().liveConfigOverrideKey, JSON.stringify({ attendanceUrl: attUrl, satisfactionUrl: satUrl }));
-    alert('Guardado solo en este navegador. Recarga la página para probarlo — esto NO afecta lo que ve el resto del equipo.');
-  }catch(err){
-    alert('No se pudo guardar en este navegador: ' + err.message);
-  }
-}
-
-function clearLiveConfigLocally(){
-  try{ localStorage.removeItem(activeProgram().liveConfigOverrideKey); }catch(err){}
-  alert('Prueba local eliminada. Recarga la página para volver a la configuración oficial del repositorio.');
-}
-
-function setupLiveConfigModal(){
-  document.getElementById('btnLiveConfig').addEventListener('click', openLiveConfigModal);
-  document.getElementById('liveConfigCloseBtn').addEventListener('click', closeLiveConfigModal);
-  document.getElementById('liveConfigModalOverlay').addEventListener('click', (e)=>{
-    if(e.target.id === 'liveConfigModalOverlay') closeLiveConfigModal();
-  });
-  document.getElementById('btnTestLiveConfig').addEventListener('click', testLiveConfig);
-  document.getElementById('btnSaveLiveLocal').addEventListener('click', saveLiveConfigLocally);
-  document.getElementById('btnClearLiveLocal').addEventListener('click', clearLiveConfigLocally);
+function setupRefreshLiveButton(){
   document.getElementById('btnRefreshLive').addEventListener('click', refreshLiveData);
 }
 
@@ -2544,7 +2459,7 @@ async function initApp(){
   updateDataPanelLabels();
   setupDataPanel();
   setupExportModal();
-  setupLiveConfigModal();
+  setupRefreshLiveButton();
   updateLiveStatusUI();
   render();
 }
