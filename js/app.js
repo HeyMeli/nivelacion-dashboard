@@ -910,7 +910,10 @@ function renderAsistencia(main, rows){
 
   const sess = programCfg.sesionKeys;
   const g2 = grid('1fr 1fr');
-  g2.appendChild(chartCard(`Asistencia promedio por sesión — S1 a S${sess.length} (%)`, 'a_sesion'));
+  // El rango se arma con la última clave real (no con sess.length): Reforzamiento salta la S3
+  // (vacía en el Excel para todos), así que "S1 a S10" sigue siendo el rango correcto aunque sean
+  // 9 sesiones, no 10 — usar sess.length ahí diría "S1 a S9", que no es el rango real mostrado.
+  g2.appendChild(chartCard(`Asistencia promedio por sesión — S1 a ${sess[sess.length-1].toUpperCase()} (%)`, 'a_sesion'));
   g2.appendChild(chartCard('Asistencia promedio por sección — top 10 (%)', 'a_seccion'));
   main.appendChild(g2);
 
@@ -1622,9 +1625,13 @@ const PROGRAMS = {
     // distinto (uno abrevia, el otro no) — esto las hace calzar bajo el mismo nombre.
     carreraNormalize: renameCarreraReforzamiento,
     cursoColumnHeader: 'Curso a reforzar',
-    sesionKeys: ['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'], // van 10 dictadas este ciclo
-    sesionesDictadas: 10,
-    minAsistenciasParticipante: 6, // regla oficial: "participó" quien asistió a 6 o más de 10
+    // S3 se deja fuera a propósito: en el Excel real esa columna queda vacía para TODOS los
+    // estudiantes (ninguna fila la tiene registrada) — no es un hueco de carga, es que esa sesión
+    // no se llegó a dictar/registrar este ciclo. Por eso son 9 sesiones reales, no 10, y
+    // "Asistencias"/sesionesDictadas ya reflejan eso en el Excel oficial (confirmado con la usuaria).
+    sesionKeys: ['s1','s2','s4','s5','s6','s7','s8','s9','s10'],
+    sesionesDictadas: 9,
+    minAsistenciasParticipante: 3, // regla oficial: "participó" quien asistió a 3 o más de 9
     evalTypes: [
       { key:'ed', label:'ED', color: BLUE[2] }, { key:'ec1', label:'EC1', color: BLUE[1] }, { key:'ec2', label:'EC2', color: BLUE[3] },
       { key:'ec3', label:'EC3', color: BLUE[5] }, { key:'ep', label:'EP', color: BLUE[4] }, { key:'ef', label:'EF', color: BLUE[0] }
