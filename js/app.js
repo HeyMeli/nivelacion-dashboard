@@ -578,6 +578,35 @@ function fmtNum(x, d=2){ return (x==null || isNaN(x)) ? '—' : x.toFixed(d); }
 function avg(arr){ const v = arr.filter(x=>x!=null && !isNaN(x)); return v.length? v.reduce((a,b)=>a+b,0)/v.length : null; }
 function sum(arr){ return arr.filter(x=>x!=null && !isNaN(x)).reduce((a,b)=>a+b,0); }
 
+// Tabla oficial de niveles de satisfacción (leyenda de los formatos GIE-DCB-FOR-02/06: Muy
+// Satisfecho 9-10 → 90-100%, Satisfecho 7-8 → 70-90%, Neutral 5-6 → 50-70%, Insatisfecho 3-4 →
+// 30-50%, Muy Insatisfecho 1-2 → 0-30%). NO es una nota*10 simple: cada banda tiene su propio
+// ancho de porcentaje (Muy Satisfecho son solo 10 puntos de %, las demás 20, Muy Insatisfecho 30),
+// así que una nota se interpola linealmente DENTRO de su banda, no contra una escala 0-100 pareja.
+// Confirmado con la usuaria con un ejemplo real: promediar las notas y multiplicar x10 da un
+// resultado distinto (y equivocado) al de convertir cada nota a su % primero y promediar después.
+const SATISFACCION_BANDAS = [
+  { min:9, max:10, li:90, ls:100 },
+  { min:7, max:8,  li:70, ls:90 },
+  { min:5, max:6,  li:50, ls:70 },
+  { min:3, max:4,  li:30, ls:50 },
+  { min:1, max:2,  li:0,  ls:30 }
+];
+function notaToSatisfaccionPct(nota){
+  if(nota == null || isNaN(nota)) return null;
+  const banda = SATISFACCION_BANDAS.find(b => nota >= b.min && nota <= b.max);
+  if(!banda) return null; // nota fuera de 1-10 (no debería pasar con el formato oficial)
+  if(banda.max === banda.min) return banda.li;
+  return banda.li + (nota - banda.min) / (banda.max - banda.min) * (banda.ls - banda.li);
+}
+// Convierte CADA nota de un subconjunto de encuestas a su % (ver notaToSatisfaccionPct) y recién
+// ahí promedia — promediar las notas crudas y convertir el promedio da un número distinto, porque
+// la conversión no es lineal pareja entre bandas.
+function avgSatisfaccionPct(subset, qkeys){
+  const pcts = qkeys.flatMap(qk => subset.map(r=>r[qk])).map(notaToSatisfaccionPct).filter(p=>p!=null);
+  return pcts.length ? pcts.reduce((a,b)=>a+b,0)/pcts.length : null;
+}
+
 // Ordena periodos académicos cronológicamente (año, luego semestre) en vez de alfabéticamente —
 // un sort de texto simple se rompe si conviven formatos distintos para lo que debería ser el
 // mismo tipo de periodo (ej. "2024-1" junto a "Nivelación 2024-1"). Extrae el año (4 dígitos) y
@@ -1236,9 +1265,7 @@ function renderSatisfaccion(main){
   }
 
   const qkeys = Object.keys(preguntas);
-  function avgQ(k, subset){ return avg(subset.map(r=>r[k])); }
-  const overall = avg(qkeys.flatMap(k=> rows.map(r=>r[k])));
-  const overallPct = overall!=null ? overall*10 : null; // scale 0-10 to %
+  const overallPct = avgSatisfaccionPct(rows, qkeys);
 
   const kpis = el('div',{class:'grid kpi-row'});
   kpis.appendChild(kpi('Encuestas ejecutadas', rows.length));
@@ -1249,8 +1276,7 @@ function renderSatisfaccion(main){
   const gBody = el('div',{});
   gBody.setAttribute('style','display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;');
   qkeys.forEach(k=>{
-    const v = avgQ(k, rows);
-    const pct = v!=null ? v*10 : 0;
+    const pct = avgSatisfaccionPct(rows, [k]) ?? 0;
     const mini = el('div',{});
     mini.setAttribute('style','text-align:center;padding:6px 4px;');
     mini.appendChild(gaugeCard('sat_'+k, k.toUpperCase(), pct, 100, x=>fmtPct(x,1), BLUE[0]));
@@ -1283,21 +1309,14 @@ function renderSatisfaccion(main){
     charts.s_curso_n = barChart(document.getElementById('s_curso_n'), cursoLabels,
       cursoLabels.map(k=> cursoMap.get(k).length), {color:BLUE[1]});
     charts.s_curso_pct = barChart(document.getElementById('s_curso_pct'), cursoLabels,
-      cursoLabels.map(k=>{
-        const subset = cursoMap.get(k);
-        const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk])));
-        return v!=null? v*10 : 0;
-      }), {isPct:true, max:100});
+      cursoLabels.map(k=> avgSatisfaccionPct(cursoMap.get(k), qkeys) ?? 0), {isPct:true, max:100});
 
     const carMap = groupBy(rows, 'carrera');
     const carEntriesN = topN(carMap, 15, v=> v.length);
     charts.s_carrera_n = barChart(document.getElementById('s_carrera_n'),
       carEntriesN.map(t=>t.label), carEntriesN.map(t=>t.value), {horizontal:true, thick:14, color:BLUE[1]});
 
-    const carEntriesPct = topN(carMap, 15, v=>{
-      const val = avg(qkeys.flatMap(qk=> v.map(r=>r[qk])));
-      return val!=null ? val*10 : 0;
-    });
+    const carEntriesPct = topN(carMap, 15, v=> avgSatisfaccionPct(v, qkeys) ?? 0);
     charts.s_carrera_pct = barChart(document.getElementById('s_carrera_pct'),
       carEntriesPct.map(t=>t.label), carEntriesPct.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
   });
@@ -1403,11 +1422,7 @@ function renderComparativo(main, rows){
     charts.cp_encuestas = barChart(document.getElementById('cp_encuestas'), satPeriods, encVals, {color:BLUE[1]});
 
     const qkeys = Object.keys(programCfg.preguntas);
-    const satVals = satPeriods.map(p => {
-      const subset = satRows.filter(r=>r.periodo===p);
-      const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk])));
-      return v!=null ? v*10 : null;
-    });
+    const satVals = satPeriods.map(p => avgSatisfaccionPct(satRows.filter(r=>r.periodo===p), qkeys));
     charts.cp_satisfaccion = lineChart(document.getElementById('cp_satisfaccion'), satPeriods,
       [{label:'Satisfacción', data: satVals}], {isPct:true});
 
@@ -1415,11 +1430,7 @@ function renderComparativo(main, rows){
       const satCursos = [...new Set(satRows.map(r=>r.curso).filter(Boolean))];
       const cpCursoSat = satCursos.map((c,i)=>({
         label:c, color: BLUE[i%BLUE.length],
-        data: satPeriods.map(p => {
-          const subset = satRows.filter(r=>r.periodo===p && r.curso===c);
-          const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk])));
-          return v!=null ? v*10 : null;
-        })
+        data: satPeriods.map(p => avgSatisfaccionPct(satRows.filter(r=>r.periodo===p && r.curso===c), qkeys))
       }));
       charts.cp_curso_sat = lineChart(document.getElementById('cp_curso_sat'), satPeriods, cpCursoSat, {isPct:true});
     }
@@ -2208,7 +2219,7 @@ function computeReportData(periodo){
 
   // Satisfacción matrix (from SAT data, may be sparse -> null shown as "SD")
   const qkeys = Object.keys(programCfg.preguntas);
-  function satPct(subset){ const v = avg(qkeys.flatMap(qk=> subset.map(r=>r[qk]))); return v!=null ? v*10 : null; }
+  function satPct(subset){ return avgSatisfaccionPct(subset, qkeys); }
   const satMx = {};
   cursos.forEach(c=>{
     satMx[c] = {};
