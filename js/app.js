@@ -1044,18 +1044,43 @@ function renderRendimiento(main, rows){
   }
   main.appendChild(kpis);
 
-  const g1 = grid('1fr 1fr');
-  g1.appendChild(chartCard('Rendimiento (eficacia) promedio por curso (%)', 'r_curso'));
-  g1.appendChild(chartCard('Rendimiento (eficacia) promedio por facultad (%)', 'r_facultad'));
-  main.appendChild(g1);
+  if(esReforzamiento){
+    // A pedido: filas de a 2 gráficos — los dos primeros muestran la NOTA (avanceObt) de
+    // aprobados/desaprobados por curso, no un %; luego avance por condición y por facultad
+    // (también en nota); al final carrera y curso sí quedan en % (eficacia), como ya estaban.
+    const gA = grid('1fr 1fr');
+    gA.appendChild(chartCard('Rendimiento de Estudiantes aprobados por Curso', 'r_curso_aprobados'));
+    gA.appendChild(chartCard('Rendimiento Estudiantes Desaprobados por Curso', 'r_curso_desaprobados'));
+    main.appendChild(gA);
 
-  main.appendChild(chartCard('Rendimiento promedio por carrera — top 15 (%)', 'r_carrera', {tall:true}));
+    const gB = grid('1fr 1fr');
+    gB.appendChild(chartCard('Avance Obtenido por Condición del Estudiante', 'r_condicion'));
+    gB.appendChild(chartCard('Rendimiento Promedio por Facultad', 'r_facultad'));
+    main.appendChild(gB);
 
-  const g2 = grid(programCfg.evalTypes.map(()=>'1fr').join(' '));
-  programCfg.evalTypes.forEach(ev=>{
-    g2.appendChild(chartCard(`Rendimiento en ${ev.label} por carrera — top 12`, `r_${ev.key}_carrera`, {tall:true}));
+    const gC = grid('1fr 1fr');
+    gC.appendChild(chartCard('Rendimiento Promedio por Carrera — top 15 (%)', 'r_carrera', {tall:true}));
+    gC.appendChild(chartCard('Rendimiento Promedio por Curso (%)', 'r_curso_pct', {tall:true}));
+    main.appendChild(gC);
+  } else {
+    const g1 = grid('1fr 1fr');
+    g1.appendChild(chartCard('Rendimiento (eficacia) promedio por curso (%)', 'r_curso'));
+    g1.appendChild(chartCard('Rendimiento (eficacia) promedio por facultad (%)', 'r_facultad'));
+    main.appendChild(g1);
+
+    main.appendChild(chartCard('Rendimiento promedio por carrera — top 15 (%)', 'r_carrera', {tall:true}));
+  }
+
+  // A pedido: los gráficos de rendimiento por carrera de cada evaluación (ED/EC1/EC2... en
+  // Reforzamiento, ED/EC1/EP en Nivelación) van de a 3 por fila en vez de todos en una sola fila —
+  // con 3 evaluaciones (Nivelación) da exactamente la misma fila de siempre, sin cambios ahí.
+  const evalChunks = [];
+  for(let i=0; i<programCfg.evalTypes.length; i+=3) evalChunks.push(programCfg.evalTypes.slice(i, i+3));
+  evalChunks.forEach(chunk=>{
+    const gRow = grid(chunk.map(()=>'1fr').join(' '));
+    chunk.forEach(ev=> gRow.appendChild(chartCard(`Rendimiento en ${ev.label} por carrera — top 12`, `r_${ev.key}_carrera`, {tall:true})));
+    main.appendChild(gRow);
   });
-  main.appendChild(g2);
 
   // detail table
   const tc = card('Detalle de rendimiento por estudiante (ordenado por rendimiento)');
@@ -1081,20 +1106,56 @@ function renderRendimiento(main, rows){
   main.appendChild(tc);
 
   requestAnimationFrame(()=>{
-    const cursoMap = groupBy(participantes, 'curso');
-    const cursoLabels = [...cursoMap.keys()];
-    charts.r_curso = barChart(document.getElementById('r_curso'), cursoLabels,
-      cursoLabels.map(k=> (avg(cursoMap.get(k).map(r=>r.eficacia))||0)*100), {isPct:true, max:100});
-
-    const facMap = groupBy(participantes, 'facultad');
-    const facEntries = topN(facMap, 20, v=> (avg(v.map(r=>r.eficacia))||0)*100);
-    charts.r_facultad = barChart(document.getElementById('r_facultad'),
-      facEntries.map(t=>t.label), facEntries.map(t=>t.value), {isPct:true, max:100});
-
     const carMap = groupBy(participantes, 'carrera');
-    const carEntries = topN(carMap, 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
-    charts.r_carrera = barChart(document.getElementById('r_carrera'),
-      carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+
+    if(esReforzamiento){
+      // "Nota" = avanceObt directo (0-20 aprox.), no eficacia*100 — a pedido, estos 4 gráficos
+      // muestran el valor de la nota, no un porcentaje.
+      const aprobPorCurso = groupBy(participantes.filter(r=>r.aprobadoBool), 'curso');
+      const aprobLabels = [...aprobPorCurso.keys()];
+      charts.r_curso_aprobados = barChart(document.getElementById('r_curso_aprobados'), aprobLabels,
+        aprobLabels.map(k=> avg(aprobPorCurso.get(k).map(r=>r.avanceObt))||0), {color: ACCENT.green});
+
+      const desaprobPorCurso = groupBy(participantes.filter(r=>!r.aprobadoBool), 'curso');
+      const desaprobLabels = [...desaprobPorCurso.keys()];
+      charts.r_curso_desaprobados = barChart(document.getElementById('r_curso_desaprobados'), desaprobLabels,
+        desaprobLabels.map(k=> avg(desaprobPorCurso.get(k).map(r=>r.avanceObt))||0), {color: ACCENT.red});
+
+      // Por condición usa `rows` completo (no solo participantes) — si no, "No participante" no
+      // tendría ningún dato con qué comparar.
+      const condMap = groupBy(rows, 'condicion');
+      const condLabels = [...condMap.keys()];
+      charts.r_condicion = barChart(document.getElementById('r_condicion'), condLabels,
+        condLabels.map(k=> avg(condMap.get(k).map(r=>r.avanceObt))||0), {color: BLUE[0]});
+
+      const facMapNota = groupBy(participantes, 'facultad');
+      const facEntriesNota = topN(facMapNota, 20, v=> avg(v.map(r=>r.avanceObt))||0);
+      charts.r_facultad = barChart(document.getElementById('r_facultad'),
+        facEntriesNota.map(t=>t.label), facEntriesNota.map(t=>t.value), {color: BLUE[0]});
+
+      const carEntries = topN(carMap, 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      charts.r_carrera = barChart(document.getElementById('r_carrera'),
+        carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+
+      const cursoMapPct = groupBy(participantes, 'curso');
+      const cursoPctEntries = topN(cursoMapPct, cursoMapPct.size, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      charts.r_curso_pct = barChart(document.getElementById('r_curso_pct'),
+        cursoPctEntries.map(t=>t.label), cursoPctEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+    } else {
+      const cursoMap = groupBy(participantes, 'curso');
+      const cursoLabels = [...cursoMap.keys()];
+      charts.r_curso = barChart(document.getElementById('r_curso'), cursoLabels,
+        cursoLabels.map(k=> (avg(cursoMap.get(k).map(r=>r.eficacia))||0)*100), {isPct:true, max:100});
+
+      const facMap = groupBy(participantes, 'facultad');
+      const facEntries = topN(facMap, 20, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      charts.r_facultad = barChart(document.getElementById('r_facultad'),
+        facEntries.map(t=>t.label), facEntries.map(t=>t.value), {isPct:true, max:100});
+
+      const carEntries = topN(carMap, 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      charts.r_carrera = barChart(document.getElementById('r_carrera'),
+        carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+    }
 
     programCfg.evalTypes.forEach(ev=>{
       const entries = topN(carMap, 12, v=> avg(v.map(r=>r[ev.key]))||0);
