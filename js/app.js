@@ -902,14 +902,26 @@ function renderAsistencia(main, rows){
   const asistGeneral = avg(participantes.map(r=>r.pctAsist));
   const retirados = computeRetirados(rows);
 
+  const esReforzamientoAsist = programCfg.key === 'reforzamiento';
   const kpis = el('div',{class:'grid kpi-row'});
   kpis.appendChild(kpi('Asistencia general', fmtPct(asistGeneral)));
-  kpis.appendChild(kpi('Estudiantes participantes', participantes.length, 'por matrícula, no por estudiante único'));
-  kpis.appendChild(kpi('Estudiantes con condición de retirado', retirados));
+  if(esReforzamientoAsist){
+    // A pedido: se quita la tarjeta de "retirado" (igual que en otras vistas) y el texto "por
+    // matrícula, no por estudiante único" de las tarjetas.
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantes.length));
+  } else {
+    kpis.appendChild(kpi('Estudiantes participantes', participantes.length, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes con condición de retirado', retirados));
+  }
   main.appendChild(kpis);
 
   const sess = programCfg.sesionKeys;
-  const sesionTitle = `Asistencia promedio por sesión — S1 a ${sess[sess.length-1].toUpperCase()} (%)`;
+  // A pedido: el GRÁFICO de sesiones sí muestra la S3 (como 0%, no como un hueco), aunque el resto
+  // de la página (tabla de detalle, % de asistencia, umbral de "Participante") siga sin contarla —
+  // esa sigue siendo la regla de negocio real (9 sesiones), esto es solo para que se vea en el
+  // gráfico que esa sesión existió y no tuvo datos.
+  const sesionChartKeys = esReforzamientoAsist ? ['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'] : sess;
+  const sesionTitle = `Asistencia promedio por sesión — S1 a ${sesionChartKeys[sesionChartKeys.length-1].toUpperCase()} (%)`;
 
   if(programCfg.key === 'reforzamiento'){
     // A pedido: se quita la nota de "retirado" (igual que en Participantes), se reordenan los
@@ -953,8 +965,9 @@ function renderAsistencia(main, rows){
   )));
   const tbody = el('tbody');
   rows.slice().sort((a,b)=>(b.pctAsist||0)-(a.pctAsist||0)).slice(0,400).forEach(r=>{
+    const nombreDisplay = esReforzamientoAsist ? (r.nombre||'').toUpperCase() : (r.nombre||'');
     tbody.appendChild(el('tr',{},
-      el('td',{}, String(r.id)), el('td',{}, r.nombre||''), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
+      el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
       ...sess.map(s=> el('td',{}, r[s]==null ? '—' : String(r[s]))),
       el('td',{}, String(r.asistencias)), el('td',{}, fmtPct(r.pctAsist))
     ));
@@ -977,10 +990,13 @@ function renderAsistencia(main, rows){
     charts.a_curso = barChart(document.getElementById('a_curso'), cursoEntries.map(t=>t.label), cursoEntries.map(t=>t.value),
       programCfg.key === 'reforzamiento' ? {horizontal:true, isPct:true, max:100, thick:14} : {isPct:true, max:100});
 
-    const sesionLabels = sess.map(s=>s.toUpperCase());
-    const sesionVals = sess.map(s=>{
+    const sesionLabels = sesionChartKeys.map(s=>s.toUpperCase());
+    const sesionVals = sesionChartKeys.map(s=>{
       const vals = participantes.map(r=>r[s]).filter(v=>v!=null);
-      return vals.length ? (sum(vals)/vals.length*100) : null;
+      if(vals.length) return sum(vals)/vals.length*100;
+      // A pedido (Reforzamiento): la S3 se muestra como 0%, no como un hueco en la línea — no hay
+      // ningún registro con ese dato, así que vals siempre queda vacío para ella.
+      return esReforzamientoAsist ? 0 : null;
     });
     charts.a_sesion = lineChart(document.getElementById('a_sesion'), sesionLabels,
       [{label:'Asistencia', data: sesionVals}], {isPct:true});
