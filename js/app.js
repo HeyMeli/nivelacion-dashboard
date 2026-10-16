@@ -579,32 +579,23 @@ function avg(arr){ const v = arr.filter(x=>x!=null && !isNaN(x)); return v.lengt
 function sum(arr){ return arr.filter(x=>x!=null && !isNaN(x)).reduce((a,b)=>a+b,0); }
 
 // Tabla oficial de niveles de satisfacción (leyenda de los formatos GIE-DCB-FOR-02/06: Muy
-// Satisfecho 9-10 → 90-100%, Satisfecho 7-8 → 70-90%, Neutral 5-6 → 50-70%, Insatisfecho 3-4 →
-// 30-50%, Muy Insatisfecho 1-2 → 0-30%). NO es una nota*10 simple: cada banda tiene su propio
-// ancho de porcentaje (Muy Satisfecho son solo 10 puntos de %, las demás 20, Muy Insatisfecho 30),
-// así que una nota se interpola linealmente DENTRO de su banda, no contra una escala 0-100 pareja.
-// Confirmado con la usuaria con un ejemplo real: promediar las notas y multiplicar x10 da un
-// resultado distinto (y equivocado) al de convertir cada nota a su % primero y promediar después.
+// Satisfecho 9-10, Satisfecho 7-8, Neutral 5-6, Insatisfecho 3-4, Muy Insatisfecho 1-2). Se usa
+// solo para CLASIFICAR un % ya calculado dentro de una de estas 5 categorías (ej. "85% cae en
+// Satisfecho") — no es una fórmula de conversión. El % en sí se calcula simple: promedio de las
+// notas (escala 0-10) de las preguntas, multiplicado por 10 — confirmado contra el informe oficial
+// de referencia (Biología Marina), cuyos porcentajes por pregunta solo cuadran con esta fórmula
+// simple, no con una interpolación banda por banda (se probó y no coincidía).
 const SATISFACCION_BANDAS = [
-  { min:9, max:10, li:90, ls:100 },
-  { min:7, max:8,  li:70, ls:90 },
-  { min:5, max:6,  li:50, ls:70 },
-  { min:3, max:4,  li:30, ls:50 },
-  { min:1, max:2,  li:0,  ls:30 }
+  { min:9, max:10, nivel:'Muy Satisfecho' },
+  { min:7, max:8,  nivel:'Satisfecho' },
+  { min:5, max:6,  nivel:'Neutral' },
+  { min:3, max:4,  nivel:'Insatisfecho' },
+  { min:1, max:2,  nivel:'Muy Insatisfecho' }
 ];
-function notaToSatisfaccionPct(nota){
-  if(nota == null || isNaN(nota)) return null;
-  const banda = SATISFACCION_BANDAS.find(b => nota >= b.min && nota <= b.max);
-  if(!banda) return null; // nota fuera de 1-10 (no debería pasar con el formato oficial)
-  if(banda.max === banda.min) return banda.li;
-  return banda.li + (nota - banda.min) / (banda.max - banda.min) * (banda.ls - banda.li);
-}
-// Convierte CADA nota de un subconjunto de encuestas a su % (ver notaToSatisfaccionPct) y recién
-// ahí promedia — promediar las notas crudas y convertir el promedio da un número distinto, porque
-// la conversión no es lineal pareja entre bandas.
+// Promedia las notas crudas (0-10) de un subconjunto de encuestas y las lleva a % (x10).
 function avgSatisfaccionPct(subset, qkeys){
-  const pcts = qkeys.flatMap(qk => subset.map(r=>r[qk])).map(notaToSatisfaccionPct).filter(p=>p!=null);
-  return pcts.length ? pcts.reduce((a,b)=>a+b,0)/pcts.length : null;
+  const v = avg(qkeys.flatMap(qk => subset.map(r=>r[qk])));
+  return v!=null ? v*10 : null;
 }
 
 // Ordena periodos académicos cronológicamente (año, luego semestre) en vez de alfabéticamente —
