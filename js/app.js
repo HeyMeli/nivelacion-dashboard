@@ -818,8 +818,8 @@ function renderParticipantes(main, rows){
     // La nota de "Retirados" se quita también a pedido — se deja en 0 sin explicación aparte.
     kpis.appendChild(kpi('Matrículas', matriculas));
     kpis.appendChild(kpi('Estudiantes', estudiantesUnicos));
-    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('Estudiantes que no participaron en el Programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes));
+    kpis.appendChild(kpi('Estudiantes que no participaron en el Programa', estudiantesNoPart));
     kpis.appendChild(kpi('Estudiantes retirados del programa', retirados));
     main.appendChild(kpis);
   } else {
@@ -1052,9 +1052,9 @@ function renderRendimiento(main, rows){
   if(esReforzamiento){
     const aprobados = participantes.filter(r=>r.aprobadoBool).length;
     const desaprobados = participantesActivos - aprobados;
-    kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantesActivos, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('Estudiantes aprobados en el programa', aprobados, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('Estudiantes desaprobados en el programa', desaprobados, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantesActivos));
+    kpis.appendChild(kpi('Estudiantes aprobados en el programa', aprobados));
+    kpis.appendChild(kpi('Estudiantes desaprobados en el programa', desaprobados));
   } else {
     kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos, 'por matrícula, no por estudiante único'));
   }
@@ -1109,8 +1109,9 @@ function renderRendimiento(main, rows){
   )));
   const tbody = el('tbody');
   participantes.slice().sort((a,b)=> (b.eficacia||0)-(a.eficacia||0)).slice(0,300).forEach(r=>{
+    const nombreDisplay = esReforzamiento ? (r.nombre||'').toUpperCase() : (r.nombre||'');
     tbody.appendChild(el('tr',{},
-      el('td',{}, String(r.id)), el('td',{}, r.nombre||''), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
+      el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
       ...programCfg.evalTypes.map(ev=> el('td',{}, fmtNum(r[ev.key],1))),
       el('td',{}, fmtNum(r.avanceObt,2)), el('td',{}, fmtNum(r.avanceIdeal,2)),
       el('td',{}, fmtPct(r.eficacia==null ? null : r.eficacia*100))
