@@ -165,6 +165,8 @@
   }
   .card .body{padding:14px;}
   .card .body.tight{padding:8px 10px;}
+  .card.card-highlight{ border:2px solid var(--amber); }
+  .card.card-highlight .head{ background: var(--amber); }
 
   .row2{grid-template-columns:1fr 1fr;}
   .row3{grid-template-columns:1fr 1fr 1fr;}
@@ -186,6 +188,7 @@
   canvas{max-height:280px;}
   .chart-wrap{position:relative;height:250px;}
   .chart-wrap.tall{height:320px;}
+  .chart-wrap.xtall{height:440px;}
   .chart-wrap.short{height:170px;}
 
   table{width:100%;border-collapse:collapse;font-size:12px;}

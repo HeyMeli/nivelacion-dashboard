@@ -774,7 +774,7 @@ function grid(cols, style){
 }
 function chartCard(title, canvasId, opts={}){
   const c = card(title);
-  const wrap = el('div',{class:'chart-wrap'+(opts.tall?' tall':'')});
+  const wrap = el('div',{class:'chart-wrap'+(opts.xtall?' xtall':opts.tall?' tall':'')});
   wrap.appendChild(el('canvas',{id:canvasId}));
   c.querySelector('.body').appendChild(wrap);
   return c;
@@ -813,17 +813,15 @@ function renderParticipantes(main, rows){
 
   const kpis = el('div',{class:'grid kpi-row'});
   if(programCfg.key === 'reforzamiento'){
-    // A pedido: acá el orden pone primero las cifras de matrícula/participación (las que
-    // más se consultan) y deja "Nro de estudiantes" al final; "No matriculados" no aplica
-    // a Reforzamiento (no hay forma de saber quién no se matriculó desde este formato), así
-    // que se omite en vez de mostrar un 0 que no significa nada.
-    kpis.appendChild(kpi('Matriculados', matriculas));
-    kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
-    kpis.appendChild(kpi('Retirados del programa', retirados));
+    // A pedido: "No matriculados" no aplica a Reforzamiento (no hay forma de saber quién no se
+    // matriculó desde este formato), así que se omite en vez de mostrar un 0 que no significa nada.
+    // La nota de "Retirados" se quita también a pedido — se deja en 0 sin explicación aparte.
+    kpis.appendChild(kpi('Matrículas', matriculas));
+    kpis.appendChild(kpi('Estudiantes', estudiantesUnicos));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes que no participaron en el Programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes retirados del programa', retirados));
     main.appendChild(kpis);
-    main.appendChild(el('div',{class:'note'}, '* "Retirados del programa" requiere un campo de estado que el formato actual no registra; se muestra en 0 hasta que esa columna esté disponible.'));
   } else {
     const noMatriculados = computeNoMatriculados(rows);
     kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
@@ -844,8 +842,13 @@ function renderParticipantes(main, rows){
   const carreraMap = groupBy(participantesRows, 'carrera');
   // Por matrícula, no por estudiante único — igual que las tarjetas KPI de arriba (ver nota junto a
   // estudiantesParticipantes).
-  const topCarreras = topN(carreraMap, 15, v=> v.length);
-  main.appendChild(chartCard('Participación de estudiantes por carrera (top 15)', 'p_carrera', {tall:true}));
+  const allCarreraEntries = topN(carreraMap, carreraMap.size, v=> v.length);
+  const topCarreras = allCarreraEntries.slice(0, 15);
+  // A pedido: las carreras que no entran en el top 15 no desaparecen — se suman en una barra
+  // "Otras" para que sigan siendo visibles, en vez de solo mostrar las 15 más grandes.
+  const otrasCarrerasTotal = allCarreraEntries.slice(15).reduce((a,e)=>a+e.value, 0);
+  const topCarrerasConOtras = otrasCarrerasTotal > 0 ? [...topCarreras, {label:'Otras', value: otrasCarrerasTotal}] : topCarreras;
+  main.appendChild(chartCard(`Participación de estudiantes por carrera (top 15${otrasCarrerasTotal>0?' + Otras':''})`, 'p_carrera', {tall:true}));
 
   // table
   const uniqueStudents = [...new Map(rows.map(r=>[r.id, r])).values()]
@@ -859,8 +862,11 @@ function renderParticipantes(main, rows){
   )));
   const tbody = el('tbody');
   rows.slice(0,400).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach(r=>{
+    // A pedido: en Reforzamiento el Excel trae nombres con mayúsculas/minúsculas inconsistentes
+    // entre filas — se normaliza a mayúsculas solo para mostrar, sin tocar el dato original.
+    const nombreDisplay = programCfg.key === 'reforzamiento' ? (r.nombre||'').toUpperCase() : (r.nombre||'');
     tbody.appendChild(el('tr',{},
-      el('td',{}, String(r.id)), el('td',{}, r.nombre||''), el('td',{}, r.curso||''),
+      el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.curso||''),
       el('td',{}, r.carrera||''), el('td',{}, r.sede||''),
       el('td',{}, el('span',{class:'badge '+(r.condicion==='Participante'?'ok':'no')}, r.condicion))
     ));
@@ -882,7 +888,7 @@ function renderParticipantes(main, rows){
       ['Participante','No participante'], [estudiantesParticipantes, estudiantesNoPart], [BLUE[1], BLUE[2]], {mode:'share'});
 
     charts.p_carrera = barChart(document.getElementById('p_carrera'),
-      topCarreras.map(t=>t.label), topCarreras.map(t=>t.value), {horizontal:true, thick:14});
+      topCarrerasConOtras.map(t=>t.label), topCarrerasConOtras.map(t=>t.value), {horizontal:true, thick:14});
   });
 }
 
@@ -901,24 +907,40 @@ function renderAsistencia(main, rows){
   kpis.appendChild(kpi('Estudiantes participantes', participantes.length, 'por matrícula, no por estudiante único'));
   kpis.appendChild(kpi('Estudiantes con condición de retirado', retirados));
   main.appendChild(kpis);
-  main.appendChild(el('div',{class:'note'}, '* "Estudiantes con condición de retirado" requiere un campo de estado que el formato actual no registra; se muestra en 0 hasta que esa columna esté disponible.'));
-
-  const g1 = grid('1fr 1fr');
-  g1.appendChild(chartCard('Asistencia promedio por sede (%)', 'a_sede'));
-  g1.appendChild(chartCard('Asistencia promedio por curso (%)', 'a_curso'));
-  main.appendChild(g1);
 
   const sess = programCfg.sesionKeys;
-  const g2 = grid('1fr 1fr');
-  // El rango se arma con la última clave real (no con sess.length): Reforzamiento salta la S3
-  // (vacía en el Excel para todos), así que "S1 a S10" sigue siendo el rango correcto aunque sean
-  // 9 sesiones, no 10 — usar sess.length ahí diría "S1 a S9", que no es el rango real mostrado.
-  g2.appendChild(chartCard(`Asistencia promedio por sesión — S1 a ${sess[sess.length-1].toUpperCase()} (%)`, 'a_sesion'));
-  g2.appendChild(chartCard('Asistencia promedio por sección — top 10 (%)', 'a_seccion'));
-  main.appendChild(g2);
+  const sesionTitle = `Asistencia promedio por sesión — S1 a ${sess[sess.length-1].toUpperCase()} (%)`;
 
-  main.appendChild(chartCard('Asistencia promedio por facultad (%)', 'a_facultad'));
-  main.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
+  if(programCfg.key === 'reforzamiento'){
+    // A pedido: se quita la nota de "retirado" (igual que en Participantes), se reordenan los
+    // gráficos (sede+facultad / carrera+curso, los dos últimos como barra horizontal top-N), se le
+    // da más espacio al de por sesión, y se retira el de por sección — ver el bloque else de abajo
+    // para el orden original de Nivelación, que no cambia.
+    const g1 = grid('1fr 1fr');
+    g1.appendChild(chartCard('Asistencia promedio por sede (%)', 'a_sede'));
+    g1.appendChild(chartCard('Asistencia promedio por facultad (%)', 'a_facultad'));
+    main.appendChild(g1);
+
+    const g2 = grid('1fr 1fr');
+    g2.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
+    g2.appendChild(chartCard('Asistencia promedio por curso (%)', 'a_curso', {tall:true}));
+    main.appendChild(g2);
+
+    main.appendChild(chartCard(sesionTitle, 'a_sesion', {xtall:true}));
+  } else {
+    const g1 = grid('1fr 1fr');
+    g1.appendChild(chartCard('Asistencia promedio por sede (%)', 'a_sede'));
+    g1.appendChild(chartCard('Asistencia promedio por curso (%)', 'a_curso'));
+    main.appendChild(g1);
+
+    const g2 = grid('1fr 1fr');
+    g2.appendChild(chartCard(sesionTitle, 'a_sesion'));
+    g2.appendChild(chartCard('Asistencia promedio por sección — top 10 (%)', 'a_seccion'));
+    main.appendChild(g2);
+
+    main.appendChild(chartCard('Asistencia promedio por facultad (%)', 'a_facultad'));
+    main.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
+  }
 
   // detail table
   const tc = card(`Detalle de asistencia por estudiante (${rows.length})`);
@@ -949,9 +971,11 @@ function renderAsistencia(main, rows){
       sedeLabels.map(k=> avg(sedeMap.get(k).map(r=>r.pctAsist))||0), BLUE, {mode:'raw'});
 
     const cursoMap = groupBy(participantes, 'curso');
-    const cursoLabels = [...cursoMap.keys()];
-    charts.a_curso = barChart(document.getElementById('a_curso'), cursoLabels,
-      cursoLabels.map(k=> avg(cursoMap.get(k).map(r=>r.pctAsist))||0), {isPct:true, max:100});
+    const cursoEntries = topN(cursoMap, cursoMap.size, v=> avg(v.map(r=>r.pctAsist))||0);
+    // A pedido: en Reforzamiento, "por curso" usa el mismo tipo de gráfico (barra horizontal) que
+    // "por carrera" — en Nivelación se deja la barra vertical de siempre.
+    charts.a_curso = barChart(document.getElementById('a_curso'), cursoEntries.map(t=>t.label), cursoEntries.map(t=>t.value),
+      programCfg.key === 'reforzamiento' ? {horizontal:true, isPct:true, max:100, thick:14} : {isPct:true, max:100});
 
     const sesionLabels = sess.map(s=>s.toUpperCase());
     const sesionVals = sess.map(s=>{
@@ -961,10 +985,12 @@ function renderAsistencia(main, rows){
     charts.a_sesion = lineChart(document.getElementById('a_sesion'), sesionLabels,
       [{label:'Asistencia', data: sesionVals}], {isPct:true});
 
-    const seccionMap = groupBy(participantes, 'seccion');
-    const topSecciones = topN(seccionMap, 10, v=> avg(v.map(r=>r.pctAsist))||0);
-    charts.a_seccion = barChart(document.getElementById('a_seccion'),
-      topSecciones.map(t=>t.label), topSecciones.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+    if(programCfg.key !== 'reforzamiento'){
+      const seccionMap = groupBy(participantes, 'seccion');
+      const topSecciones = topN(seccionMap, 10, v=> avg(v.map(r=>r.pctAsist))||0);
+      charts.a_seccion = barChart(document.getElementById('a_seccion'),
+        topSecciones.map(t=>t.label), topSecciones.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
+    }
 
     const facMap = groupBy(participantes, 'facultad');
     const facEntries = topN(facMap, 20, v=> avg(v.map(r=>r.pctAsist))||0);
@@ -990,9 +1016,14 @@ function renderRendimiento(main, rows){
   const rendGeneral = programCfg.rendGeneral.compute(participantes);
   const participantesActivos = participantes.length; // por matrícula, no por estudiante único
 
+  // A pedido (Reforzamiento): "Rendimiento general" pasa a llamarse "Rendimiento Promedio Obtenido"
+  // (coincide con el informe oficial de referencia) y se diferencia visualmente de los promedios
+  // por evaluación — color ámbar en vez del azul de siempre, más una tarjeta resaltada.
+  const esReforzamiento = programCfg.key === 'reforzamiento';
   const gaugeRow = el('div',{}); gaugeRow.setAttribute('style','display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
-  const gcardGeneral = card('Rendimiento general');
-  gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), BLUE[0]));
+  const gcardGeneral = card(esReforzamiento ? 'Rendimiento Promedio Obtenido' : 'Rendimiento general');
+  if(esReforzamiento) gcardGeneral.classList.add('card-highlight');
+  gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), esReforzamiento ? ACCENT.amber : BLUE[0]));
   gaugeRow.appendChild(gcardGeneral);
   programCfg.evalTypes.forEach(ev=>{
     const gc = card('Promedio '+ev.label);
@@ -1002,7 +1033,15 @@ function renderRendimiento(main, rows){
   main.appendChild(gaugeRow);
 
   const kpis = el('div',{class:'grid kpi-row'});
-  kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos, 'por matrícula, no por estudiante único'));
+  if(esReforzamiento){
+    const aprobados = participantes.filter(r=>r.aprobadoBool).length;
+    const desaprobados = participantesActivos - aprobados;
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantesActivos, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes aprobados en el programa', aprobados, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes desaprobados en el programa', desaprobados, 'por matrícula, no por estudiante único'));
+  } else {
+    kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos, 'por matrícula, no por estudiante único'));
+  }
   main.appendChild(kpis);
 
   const g1 = grid('1fr 1fr');
