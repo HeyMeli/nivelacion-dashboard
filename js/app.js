@@ -655,6 +655,24 @@ function el(tag, attrs={}, ...children){
   return e;
 }
 
+// Degradé de azules (oscuro → claro), para resaltar las barras de mayor valor en gráficos donde
+// los datos ya vienen ordenados de mayor a menor (ver topN) — a pedido, mismo estilo que la
+// imagen de referencia para "Asistencia promedio por facultad".
+function blueGradient(n){
+  if(n<=1) return [BLUE[0]];
+  const dark = [15, 62, 122];    // #0F3E7A
+  const light = [185, 219, 255]; // #B9DBFF
+  const out = [];
+  for(let i=0;i<n;i++){
+    const t = i/(n-1);
+    const r = Math.round(dark[0] + (light[0]-dark[0])*t);
+    const g = Math.round(dark[1] + (light[1]-dark[1])*t);
+    const b = Math.round(dark[2] + (light[2]-dark[2])*t);
+    out.push(`rgb(${r},${g},${b})`);
+  }
+  return out;
+}
+
 function barChart(ctx, labels, data, opts={}){
   const horizontal = !!opts.horizontal;
   const valueAxis = horizontal ? 'x' : 'y';
@@ -665,7 +683,7 @@ function barChart(ctx, labels, data, opts={}){
     ticks:{ callback: v=> opts.isPct ? v+'%': v },
     beginAtZero:true, max: opts.max
   };
-  scales[categoryAxis] = { grid:{ display: !horizontal, color:'#EEF3FA' } };
+  scales[categoryAxis] = { grid:{ display: !horizontal, color:'#EEF3FA' }, ticks: opts.categoryTickStyle || {} };
 
   return new Chart(ctx, {
     type:'bar',
@@ -862,12 +880,17 @@ function renderParticipantes(main, rows){
     main.appendChild(kpis);
   } else {
     const noMatriculados = computeNoMatriculados(rows);
-    kpis.appendChild(kpi('Matrículas', matriculas));
+    // A pedido: 3 columnas x 2 filas, en pares apilados — Estudiantes/Matrículas,
+    // No participaron/Participaron, No matriculados/Retirados. grid-auto-flow:column llena cada
+    // columna de arriba a abajo antes de pasar a la siguiente, así que el orden en que se agregan
+    // las tarjetas abajo ya refleja los pares pedidos.
+    kpis.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);grid-auto-flow:column;gap:14px;margin-bottom:14px;';
     kpis.appendChild(kpi('Estudiantes', estudiantesUnicos));
-    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes));
+    kpis.appendChild(kpi('Matrículas', matriculas));
     kpis.appendChild(kpi('Estudiantes que no participaron en el Programa', estudiantesNoPart));
-    kpis.appendChild(kpi('Estudiantes retirados del programa', retirados));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes));
     kpis.appendChild(kpi('Estudiantes no matriculados en el programa', noMatriculados));
+    kpis.appendChild(kpi('Estudiantes retirados del programa', retirados));
     main.appendChild(kpis);
   }
 
@@ -1069,8 +1092,12 @@ function renderAsistencia(main, rows){
     const facSource = esReforzamientoAsist ? participantes : applyFiltersAllFacultades(ATT).filter(r=>r.condicion==='Participante');
     const facMap = groupBy(facSource, 'facultad');
     const facEntries = topN(facMap, 20, v=> avg(v.map(r=>r.pctAsist))||0);
+    // A pedido: degradé de azules (barra más alta = más oscura) y etiquetas del eje en negrita
+    // ámbar, para que se lea mejor — mismo estilo pedido para el gráfico "por facultad".
     charts.a_facultad = barChart(document.getElementById('a_facultad'),
-      facEntries.map(t=>t.label), facEntries.map(t=>t.value), {isPct:true, max:100});
+      facEntries.map(t=>t.label), facEntries.map(t=>t.value),
+      { isPct:true, max:100, color: blueGradient(facEntries.length),
+        categoryTickStyle: { color: ACCENT.amber, font:{weight:'700', size:10} } });
 
     const carMap = groupBy(participantes, 'carrera');
     const carEntries = topN(carMap, carreraFiltrada ? carMap.size : 15, v=> avg(v.map(r=>r.pctAsist))||0);
@@ -1160,12 +1187,14 @@ function renderRendimiento(main, rows){
     gC.appendChild(chartCard('Rendimiento Promedio por Curso (%)', 'r_curso_pct', {tall:true}));
     main.appendChild(gC);
   } else {
-    // A pedido: curso, facultad y carrera van en la misma fila (antes carrera quedaba sola,
-    // debajo) — y se quita la palabra "(eficacia)" de los títulos. Facultad siempre muestra TODAS
-    // las facultades (ver applyFiltersAllFacultades), aunque haya un filtro de Carrera activo.
-    const g1 = grid('1fr 1fr 1fr');
+    // A pedido: facultad va sola en su propia fila (para que se vea mejor, con más ancho), y
+    // debajo van curso y carrera juntos — y se quita la palabra "(eficacia)" de los títulos.
+    // Facultad siempre muestra TODAS las facultades (ver applyFiltersAllFacultades), aunque haya
+    // un filtro de Carrera activo.
+    main.appendChild(chartCard('Rendimiento promedio por facultad (%)', 'r_facultad', {tall:true}));
+
+    const g1 = grid('1fr 1fr');
     g1.appendChild(chartCard('Rendimiento promedio por curso (%)', 'r_curso', {tall:true}));
-    g1.appendChild(chartCard('Rendimiento promedio por facultad (%)', 'r_facultad', {tall:true}));
     g1.appendChild(chartCard(rCarreraTitle, 'r_carrera', {tall:true}));
     main.appendChild(g1);
   }
