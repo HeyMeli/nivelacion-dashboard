@@ -683,7 +683,13 @@ function barChart(ctx, labels, data, opts={}){
     ticks:{ callback: v=> opts.isPct ? v+'%': v },
     beginAtZero:true, max: opts.max
   };
-  scales[categoryAxis] = { grid:{ display: !horizontal, color:'#EEF3FA' }, ticks: opts.categoryTickStyle || {} };
+  // compactLabels: para categorías largas (ej. nombres de facultad) que si no, Chart.js rota casi
+  // vertical y ocupa demasiado espacio debajo del gráfico — fija la rotación a 40° y achica un
+  // poco la letra, sin tocar el color (se mantiene el gris por defecto de siempre).
+  scales[categoryAxis] = {
+    grid:{ display: !horizontal, color:'#EEF3FA' },
+    ticks: opts.compactLabels ? { maxRotation:40, minRotation:40, font:{size:9} } : {}
+  };
 
   return new Chart(ctx, {
     type:'bar',
@@ -1092,12 +1098,12 @@ function renderAsistencia(main, rows){
     const facSource = esReforzamientoAsist ? participantes : applyFiltersAllFacultades(ATT).filter(r=>r.condicion==='Participante');
     const facMap = groupBy(facSource, 'facultad');
     const facEntries = topN(facMap, 20, v=> avg(v.map(r=>r.pctAsist))||0);
-    // A pedido: degradé de azules (barra más alta = más oscura) y etiquetas del eje en negrita
-    // ámbar, para que se lea mejor — mismo estilo pedido para el gráfico "por facultad".
+    // A pedido: degradé de azules (barra más alta = más oscura). El color/negrita ámbar de las
+    // etiquetas del eje se probó y se revirtió — ocupaba demasiado espacio y el color original
+    // (gris por defecto, igual que el resto de los gráficos) se veía mejor.
     charts.a_facultad = barChart(document.getElementById('a_facultad'),
       facEntries.map(t=>t.label), facEntries.map(t=>t.value),
-      { isPct:true, max:100, color: blueGradient(facEntries.length),
-        categoryTickStyle: { color: ACCENT.amber, font:{weight:'700', size:10} } });
+      { isPct:true, max:100, color: blueGradient(facEntries.length), compactLabels:true });
 
     const carMap = groupBy(participantes, 'carrera');
     const carEntries = topN(carMap, carreraFiltrada ? carMap.size : 15, v=> avg(v.map(r=>r.pctAsist))||0);
