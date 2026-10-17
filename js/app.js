@@ -2342,7 +2342,7 @@ function buildReportHTML(d, customText, chartImages){
 
   const conclusionesExtra = (customText.conclusiones || '').trim();
   const conclusionesBlock = conclusionesExtra
-    ? `<h3>Análisis adicional</h3>${textToParagraphs(conclusionesExtra)}`
+    ? `<h2>Conclusiones</h2>${textToParagraphs(conclusionesExtra)}`
     : '';
 
   const recomendacionesTxt = (customText.recomendaciones || '').trim() || PROGRAMS[d.programKey].defaultRecomendaciones;
@@ -2375,9 +2375,13 @@ function buildReportHTML(d, customText, chartImages){
   tr.totalrow{ background:#F4F8FE; font-weight:700; }
   .report-chart{ max-width:100%; border:1px solid #B9C9DC; border-radius:4px; background:#fff; }
   .anexos-grid{ display:flex; flex-direction:column; gap:18px; }
-  .anexo-item{ page-break-inside:avoid; break-inside:avoid; }
+  .anexo-item{ page-break-inside:avoid; break-inside:avoid; page-break-before:always; break-before:page; }
+  .anexo-item:first-child{ page-break-before:avoid; break-before:avoid; }
   .anexo-item h3{ text-decoration:none; }
-  .anexo-item .report-chart{ max-width:100%; }
+  /* La captura entra entera en una sola hoja: si no, "avoid" la empuja a la siguiente página
+     dejando la hoja anterior casi vacía (el error que reportó la usuaria). 24cm deja margen para
+     el <h3> de cada captura dentro de los ~25.7cm útiles de una A4 con los márgenes de @page. */
+  .anexo-item .report-chart{ max-width:100%; max-height:24cm; width:auto; display:block; margin:0 auto; }
   .sign{ margin-top:60px; text-align:center; }
   .sign-img{ display:block; max-height:70px; max-width:280px; margin:0 auto 4px; }
   .sign .line{ border-top:1px solid #16283F; width:280px; margin:0 auto 4px; padding-top:6px; }
@@ -2395,7 +2399,7 @@ function buildReportHTML(d, customText, chartImages){
 
   <div class="brand"><img src="${LOGO_UCSUR_DATA_URI}" alt="Logo"></div>
   <h1>Informe del Programa de ${d.programLabel}</h1>
-  <div class="memoNo">N° ____-DACB-U. CIENTÍFICA-${d.periodo.split('-')[0]}</div>
+  <div class="memoNo">N° ${escapeHtml((customText.numero||'').trim() || '____')}-DACB-U. CIENTÍFICA-${d.periodo.split('-')[0]}</div>
 
   <div class="memoRow"><b>Para</b><span>: ${paraHtml}</span></div>
   <div class="memoRow"><b>De</b><span>: ${deHtml}</span></div>
@@ -2404,7 +2408,7 @@ function buildReportHTML(d, customText, chartImages){
 
   <p style="margin-top:16px;">Es grato dirigirme a Ud. para comunicarle los resultados obtenidos del programa de ${d.programLower}, implementado por el Departamento Académico de Cursos Básicos, aplicado a los estudiantes de ${d.carreraLabel} durante el periodo ${d.periodo}${filtrosTxt ? ` (${filtrosTxt})` : ''}. A continuación, se muestran los siguientes resultados:</p>
 
-  <h2>Conclusiones</h2>
+  <h2>Resultados</h2>
 
   <h3>Participación</h3>
   <p>De los <strong>${d.totalMatriculados} matriculados</strong> (${d.estudiantesUnicos} estudiantes) inscritos en el programa, participaron ${d.estudiantesParticipantes} estudiantes, que corresponde a un <strong>${d.pctParticipacion.toFixed(1)}%</strong>.</p>
@@ -2432,7 +2436,7 @@ function buildReportHTML(d, customText, chartImages){
   <h2>Recomendaciones</h2>
   ${textToParagraphs(recomendacionesTxt)}
 
-  <h3>Acciones que se tomarán en DACB para el siguiente ciclo:</h3>
+  <h2>Acciones que se tomarán en DACB para el siguiente ciclo:</h2>
   <ul>${accionesItems}</ul>
 
   ${(() => {
@@ -2489,8 +2493,8 @@ const reportSignerText = {
 // Conclusiones/recomendaciones/acciones sí quedan separadas por programa, para que el texto de un
 // informe de Nivelación nunca se mezcle con el de Reforzamiento (ver switchProgram()).
 const reportContentText = {
-  nivelacion: { conclusiones: '', recomendaciones: '', acciones: '' },
-  reforzamiento: { conclusiones: '', recomendaciones: '', acciones: '' }
+  nivelacion: { numero: '', conclusiones: '', recomendaciones: '', acciones: '' },
+  reforzamiento: { numero: '', conclusiones: '', recomendaciones: '', acciones: '' }
 };
 
 function showFirmaPreview(){
@@ -2570,6 +2574,7 @@ function openExportModal(){
 
   const contentText = reportContentText[currentProgram];
 
+  document.getElementById('inNumeroInforme').value = contentText.numero || '';
   document.getElementById('inParaNombre').value = reportSignerText.paraNombre;
   document.getElementById('inParaCargo').value = reportSignerText.paraCargo || defaultParaCargo(data.carreraLabel);
   document.getElementById('inDeNombre').value = reportSignerText.deNombre;
@@ -2593,6 +2598,7 @@ function generateReportFromModal(){
   reportSignerText.deNombre = document.getElementById('inDeNombre').value;
   reportSignerText.deCargo = document.getElementById('inDeCargo').value;
   const contentText = reportContentText[currentProgram];
+  contentText.numero = document.getElementById('inNumeroInforme').value;
   contentText.conclusiones = document.getElementById('taConclusiones').value;
   contentText.recomendaciones = document.getElementById('taRecomendaciones').value;
   contentText.acciones = document.getElementById('taAcciones').value;
@@ -2684,6 +2690,7 @@ function setupExportModal(){
   document.getElementById('btnGenerateReport').addEventListener('click', generateReportFromModal);
   document.getElementById('btnResetText').addEventListener('click', ()=>{
     const carreraLabel = (openExportModal._data && openExportModal._data.carreraLabel) || 'todas las carreras';
+    document.getElementById('inNumeroInforme').value = '';
     document.getElementById('inParaNombre').value = '';
     document.getElementById('inParaCargo').value = defaultParaCargo(carreraLabel);
     document.getElementById('inDeNombre').value = '';
