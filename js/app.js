@@ -436,6 +436,18 @@ function applyFilters(rows){
   );
 }
 
+// A pedido (Nivelación): los gráficos "por facultad" de Asistencia y Rendimiento deben mostrar
+// SIEMPRE todas las facultades, incluso con un filtro de Carrera activo (una carrera pertenece a
+// una sola facultad, así que filtrar por carrera también dejaría ver solo esa única facultad).
+// Se ignoran Facultad y Carrera; Periodo/Sede/Curso se siguen respetando.
+function applyFiltersAllFacultades(rows){
+  return rows.filter(r =>
+    (!state.periodo || r.periodo === state.periodo) &&
+    (!state.sede || r.sede === state.sede) &&
+    (!state.curso.length || state.curso.includes(r.curso))
+  );
+}
+
 // Comparativo is inherently multi-period, so it ignores the Periodo académico filter
 // (it still respects Facultad/Carrera/Sede/Curso).
 function applyFiltersExceptPeriodo(rows){
@@ -850,14 +862,13 @@ function renderParticipantes(main, rows){
     main.appendChild(kpis);
   } else {
     const noMatriculados = computeNoMatriculados(rows);
-    kpis.appendChild(kpi('Nro de estudiantes', estudiantesUnicos));
-    kpis.appendChild(kpi('Matriculados', matriculas));
-    kpis.appendChild(kpi('Participaron en el programa', estudiantesParticipantes, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('No participaron en el programa', estudiantesNoPart, 'por matrícula, no por estudiante único'));
-    kpis.appendChild(kpi('Retirados del programa', retirados));
-    kpis.appendChild(kpi('No matriculados', noMatriculados));
+    kpis.appendChild(kpi('Matrículas', matriculas));
+    kpis.appendChild(kpi('Estudiantes', estudiantesUnicos));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', estudiantesParticipantes));
+    kpis.appendChild(kpi('Estudiantes que no participaron en el Programa', estudiantesNoPart));
+    kpis.appendChild(kpi('Estudiantes retirados del programa', retirados));
+    kpis.appendChild(kpi('Estudiantes no matriculados en el programa', noMatriculados));
     main.appendChild(kpis);
-    main.appendChild(el('div',{class:'note'}, '* "Retirados del programa" y "No matriculados" requieren un campo de estado que el formato actual no registra; se muestran en 0 hasta que esa columna esté disponible.'));
   }
 
   const grid1 = grid('1.3fr 1fr');
@@ -865,16 +876,24 @@ function renderParticipantes(main, rows){
   grid1.appendChild(chartCard('Condición del estudiante (%)', 'p_condicion'));
   main.appendChild(grid1);
 
+  // A pedido: con un filtro de Carrera activo solo puede haber una barra, así que el "top 15" no
+  // tiene sentido — se quita el límite y la palabra del título. Sin filtro, se mantiene el top 15
+  // + "Otras" de siempre. (Mismo criterio aplicado a los demás gráficos "por carrera" del resto
+  // de las vistas, en Nivelación y Reforzamiento.)
+  const carreraFiltrada = !!state.carrera;
   const carreraMap = groupBy(participantesRows, 'carrera');
   // Por matrícula, no por estudiante único — igual que las tarjetas KPI de arriba (ver nota junto a
   // estudiantesParticipantes).
   const allCarreraEntries = topN(carreraMap, carreraMap.size, v=> v.length);
-  const topCarreras = allCarreraEntries.slice(0, 15);
+  const topCarreras = carreraFiltrada ? allCarreraEntries : allCarreraEntries.slice(0, 15);
   // A pedido: las carreras que no entran en el top 15 no desaparecen — se suman en una barra
   // "Otras" para que sigan siendo visibles, en vez de solo mostrar las 15 más grandes.
-  const otrasCarrerasTotal = allCarreraEntries.slice(15).reduce((a,e)=>a+e.value, 0);
+  const otrasCarrerasTotal = carreraFiltrada ? 0 : allCarreraEntries.slice(15).reduce((a,e)=>a+e.value, 0);
   const topCarrerasConOtras = otrasCarrerasTotal > 0 ? [...topCarreras, {label:'Otras', value: otrasCarrerasTotal}] : topCarreras;
-  main.appendChild(chartCard(`Participación de estudiantes por carrera (top 15${otrasCarrerasTotal>0?' + Otras':''})`, 'p_carrera', {tall:true}));
+  const pCarreraTitle = carreraFiltrada
+    ? 'Participación de estudiantes por carrera'
+    : `Participación de estudiantes por carrera (top 15${otrasCarrerasTotal>0?' + Otras':''})`;
+  main.appendChild(chartCard(pCarreraTitle, 'p_carrera', {tall:true}));
 
   // table
   const uniqueStudents = [...new Map(rows.map(r=>[r.id, r])).values()]
@@ -888,9 +907,9 @@ function renderParticipantes(main, rows){
   )));
   const tbody = el('tbody');
   rows.slice(0,400).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'')).forEach(r=>{
-    // A pedido: en Reforzamiento el Excel trae nombres con mayúsculas/minúsculas inconsistentes
-    // entre filas — se normaliza a mayúsculas solo para mostrar, sin tocar el dato original.
-    const nombreDisplay = programCfg.key === 'reforzamiento' ? (r.nombre||'').toUpperCase() : (r.nombre||'');
+    // A pedido: el Excel trae nombres con mayúsculas/minúsculas inconsistentes entre filas — se
+    // normaliza a mayúsculas solo para mostrar, sin tocar el dato original.
+    const nombreDisplay = (r.nombre||'').toUpperCase();
     tbody.appendChild(el('tr',{},
       el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.curso||''),
       el('td',{}, r.carrera||''), el('td',{}, r.sede||''),
@@ -936,7 +955,7 @@ function renderAsistencia(main, rows){
     // matrícula, no por estudiante único" de las tarjetas.
     kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantes.length));
   } else {
-    kpis.appendChild(kpi('Estudiantes participantes', participantes.length, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi('Estudiantes que participaron en el programa', participantes.length));
     kpis.appendChild(kpi('Estudiantes con condición de retirado', retirados));
   }
   main.appendChild(kpis);
@@ -949,6 +968,12 @@ function renderAsistencia(main, rows){
   const sesionChartKeys = esReforzamientoAsist ? ['s1','s2','s3','s4','s5','s6','s7','s8','s9','s10'] : sess;
   const sesionTitle = `Asistencia promedio por sesión — S1 a ${sesionChartKeys[sesionChartKeys.length-1].toUpperCase()} (%)`;
 
+  // A pedido: con un filtro de Carrera activo, "por carrera" y "por sección" solo pueden tener una
+  // barra — se quita el "top N" del título y del cálculo (mismo criterio usado en Participantes).
+  const carreraFiltrada = !!state.carrera;
+  const carreraTitle = carreraFiltrada ? 'Asistencia promedio por carrera (%)' : 'Asistencia promedio por carrera — top 15 (%)';
+  const seccionTitle = carreraFiltrada ? 'Asistencia promedio por sección (%)' : 'Asistencia promedio por sección — top 10 (%)';
+
   if(programCfg.key === 'reforzamiento'){
     // A pedido: se quita la nota de "retirado" (igual que en Participantes), se reordenan los
     // gráficos (sede+facultad / carrera+curso, los dos últimos como barra horizontal top-N), se le
@@ -960,7 +985,7 @@ function renderAsistencia(main, rows){
     main.appendChild(g1);
 
     const g2 = grid('1fr 1fr');
-    g2.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
+    g2.appendChild(chartCard(carreraTitle, 'a_carrera', {tall:true}));
     g2.appendChild(chartCard('Asistencia promedio por curso (%)', 'a_curso', {tall:true}));
     main.appendChild(g2);
 
@@ -973,11 +998,15 @@ function renderAsistencia(main, rows){
 
     const g2 = grid('1fr 1fr');
     g2.appendChild(chartCard(sesionTitle, 'a_sesion'));
-    g2.appendChild(chartCard('Asistencia promedio por sección — top 10 (%)', 'a_seccion'));
+    g2.appendChild(chartCard(seccionTitle, 'a_seccion'));
     main.appendChild(g2);
 
-    main.appendChild(chartCard('Asistencia promedio por facultad (%)', 'a_facultad'));
-    main.appendChild(chartCard('Asistencia promedio por carrera — top 15 (%)', 'a_carrera', {tall:true}));
+    // A pedido: facultad y carrera van en la misma fila — facultad siempre muestra TODAS las
+    // facultades (ver applyFiltersAllFacultades), y al lado queda la de carrera.
+    const g3 = grid('1fr 1fr');
+    g3.appendChild(chartCard('Asistencia promedio por facultad (%)', 'a_facultad'));
+    g3.appendChild(chartCard(carreraTitle, 'a_carrera', {tall:true}));
+    main.appendChild(g3);
   }
 
   // detail table
@@ -991,7 +1020,7 @@ function renderAsistencia(main, rows){
   )));
   const tbody = el('tbody');
   rows.slice().sort((a,b)=>(b.pctAsist||0)-(a.pctAsist||0)).slice(0,400).forEach(r=>{
-    const nombreDisplay = esReforzamientoAsist ? (r.nombre||'').toUpperCase() : (r.nombre||'');
+    const nombreDisplay = (r.nombre||'').toUpperCase();
     tbody.appendChild(el('tr',{},
       el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
       ...sess.map(s=> el('td',{}, r[s]==null ? '—' : String(r[s]))),
@@ -1029,18 +1058,22 @@ function renderAsistencia(main, rows){
 
     if(programCfg.key !== 'reforzamiento'){
       const seccionMap = groupBy(participantes, 'seccion');
-      const topSecciones = topN(seccionMap, 10, v=> avg(v.map(r=>r.pctAsist))||0);
+      const topSecciones = topN(seccionMap, carreraFiltrada ? seccionMap.size : 10, v=> avg(v.map(r=>r.pctAsist))||0);
       charts.a_seccion = barChart(document.getElementById('a_seccion'),
         topSecciones.map(t=>t.label), topSecciones.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
     }
 
-    const facMap = groupBy(participantes, 'facultad');
+    // A pedido (Nivelación): "por facultad" siempre muestra TODAS las facultades, aunque haya un
+    // filtro de Carrera activo — Reforzamiento no pidió este cambio, así que mantiene su fuente de
+    // siempre (`participantes`, ya filtrada).
+    const facSource = esReforzamientoAsist ? participantes : applyFiltersAllFacultades(ATT).filter(r=>r.condicion==='Participante');
+    const facMap = groupBy(facSource, 'facultad');
     const facEntries = topN(facMap, 20, v=> avg(v.map(r=>r.pctAsist))||0);
     charts.a_facultad = barChart(document.getElementById('a_facultad'),
       facEntries.map(t=>t.label), facEntries.map(t=>t.value), {isPct:true, max:100});
 
     const carMap = groupBy(participantes, 'carrera');
-    const carEntries = topN(carMap, 15, v=> avg(v.map(r=>r.pctAsist))||0);
+    const carEntries = topN(carMap, carreraFiltrada ? carMap.size : 15, v=> avg(v.map(r=>r.pctAsist))||0);
     charts.a_carrera = barChart(document.getElementById('a_carrera'),
       carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
   });
@@ -1072,26 +1105,28 @@ function renderRendimiento(main, rows){
     kpis.appendChild(kpi('Estudiantes aprobados en el programa', aprobados));
     kpis.appendChild(kpi('Estudiantes desaprobados en el programa', desaprobados));
   } else {
-    kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos, 'por matrícula, no por estudiante único'));
+    kpis.appendChild(kpi(`Participantes activos en el programa de ${programCfg.labelLower}`, participantesActivos));
   }
   main.appendChild(kpis);
 
   // A pedido (Reforzamiento): "Rendimiento Promedio Obtenido" ocupa 2 filas a la izquierda, y los
   // 6 medidores de evaluación (ED/EC1/EC2/EC3/EP/EF) se distribuyen 3 y 3 a su lado. Nivelación
-  // mantiene su fila simple de siempre (solo 1 general + 3 evaluaciones).
+  // mantiene su fila simple de siempre (solo 1 general + 3 evaluaciones) — pero a pedido, en ambos
+  // programas la tarjeta general ahora se diferencia visualmente de los promedios por evaluación
+  // (borde/color ámbar en vez de azul).
   const gaugeRow = el('div',{});
   gaugeRow.setAttribute('style', esReforzamiento
     ? 'display:grid;grid-template-columns:1fr repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:14px;margin-bottom:14px;'
     : 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
   const gcardGeneral = card(esReforzamiento ? 'Rendimiento Promedio Obtenido' : 'Rendimiento general');
+  gcardGeneral.classList.add('card-highlight');
   if(esReforzamiento){
-    gcardGeneral.classList.add('card-highlight');
     gcardGeneral.style.gridRow = 'span 2';
     // La tarjeta ocupa 2 filas (más alta que las demás) — centra el medidor verticalmente en vez
     // de dejarlo pegado arriba.
     gcardGeneral.querySelector('.body').style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;';
   }
-  gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), esReforzamiento ? ACCENT.amber : BLUE[0]));
+  gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), ACCENT.amber));
   gaugeRow.appendChild(gcardGeneral);
   programCfg.evalTypes.forEach(ev=>{
     const gc = card('Promedio '+ev.label);
@@ -1099,6 +1134,12 @@ function renderRendimiento(main, rows){
     gaugeRow.appendChild(gc);
   });
   main.appendChild(gaugeRow);
+
+  // A pedido: con un filtro de Carrera activo, los gráficos "por carrera" solo tendrían una barra
+  // — se quita el "top N" del título y del cálculo (mismo criterio que en Participantes/Asistencia).
+  const carreraFiltrada = !!state.carrera;
+  const rCarreraTitlePlain = esReforzamiento ? 'Rendimiento Promedio por Carrera' : 'Rendimiento promedio por carrera';
+  const rCarreraTitle = carreraFiltrada ? `${rCarreraTitlePlain} (%)` : `${rCarreraTitlePlain} — top 15 (%)`;
 
   if(esReforzamiento){
     // A pedido: filas de a 2 gráficos — los dos primeros muestran la NOTA (avanceObt) de
@@ -1115,26 +1156,29 @@ function renderRendimiento(main, rows){
     main.appendChild(gB);
 
     const gC = grid('1fr 1fr');
-    gC.appendChild(chartCard('Rendimiento Promedio por Carrera — top 15 (%)', 'r_carrera', {tall:true}));
+    gC.appendChild(chartCard(rCarreraTitle, 'r_carrera', {tall:true}));
     gC.appendChild(chartCard('Rendimiento Promedio por Curso (%)', 'r_curso_pct', {tall:true}));
     main.appendChild(gC);
   } else {
-    const g1 = grid('1fr 1fr');
-    g1.appendChild(chartCard('Rendimiento (eficacia) promedio por curso (%)', 'r_curso'));
-    g1.appendChild(chartCard('Rendimiento (eficacia) promedio por facultad (%)', 'r_facultad'));
+    // A pedido: curso, facultad y carrera van en la misma fila (antes carrera quedaba sola,
+    // debajo) — y se quita la palabra "(eficacia)" de los títulos. Facultad siempre muestra TODAS
+    // las facultades (ver applyFiltersAllFacultades), aunque haya un filtro de Carrera activo.
+    const g1 = grid('1fr 1fr 1fr');
+    g1.appendChild(chartCard('Rendimiento promedio por curso (%)', 'r_curso', {tall:true}));
+    g1.appendChild(chartCard('Rendimiento promedio por facultad (%)', 'r_facultad', {tall:true}));
+    g1.appendChild(chartCard(rCarreraTitle, 'r_carrera', {tall:true}));
     main.appendChild(g1);
-
-    main.appendChild(chartCard('Rendimiento promedio por carrera — top 15 (%)', 'r_carrera', {tall:true}));
   }
 
   // A pedido: los gráficos de rendimiento por carrera de cada evaluación (ED/EC1/EC2... en
   // Reforzamiento, ED/EC1/EP en Nivelación) van de a 3 por fila en vez de todos en una sola fila —
   // con 3 evaluaciones (Nivelación) da exactamente la misma fila de siempre, sin cambios ahí.
+  const evalCarreraTitle = carreraFiltrada ? 'por carrera' : 'por carrera — top 12';
   const evalChunks = [];
   for(let i=0; i<programCfg.evalTypes.length; i+=3) evalChunks.push(programCfg.evalTypes.slice(i, i+3));
   evalChunks.forEach(chunk=>{
     const gRow = grid(chunk.map(()=>'1fr').join(' '));
-    chunk.forEach(ev=> gRow.appendChild(chartCard(`Rendimiento en ${ev.label} por carrera — top 12`, `r_${ev.key}_carrera`, {tall:true})));
+    chunk.forEach(ev=> gRow.appendChild(chartCard(`Rendimiento en ${ev.label} ${evalCarreraTitle}`, `r_${ev.key}_carrera`, {tall:true})));
     main.appendChild(gRow);
   });
 
@@ -1149,7 +1193,7 @@ function renderRendimiento(main, rows){
   )));
   const tbody = el('tbody');
   participantes.slice().sort((a,b)=> (b.eficacia||0)-(a.eficacia||0)).slice(0,300).forEach(r=>{
-    const nombreDisplay = esReforzamiento ? (r.nombre||'').toUpperCase() : (r.nombre||'');
+    const nombreDisplay = (r.nombre||'').toUpperCase();
     tbody.appendChild(el('tr',{},
       el('td',{}, String(r.id)), el('td',{}, nombreDisplay), el('td',{}, r.carrera||''), el('td',{}, r.curso||''),
       ...programCfg.evalTypes.map(ev=> el('td',{}, fmtNum(r[ev.key],1))),
@@ -1190,7 +1234,7 @@ function renderRendimiento(main, rows){
       charts.r_facultad = barChart(document.getElementById('r_facultad'),
         facEntriesNota.map(t=>t.label), facEntriesNota.map(t=>t.value), {color: BLUE[0]});
 
-      const carEntries = topN(carMap, 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      const carEntries = topN(carMap, carreraFiltrada ? carMap.size : 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
       charts.r_carrera = barChart(document.getElementById('r_carrera'),
         carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
 
@@ -1204,18 +1248,21 @@ function renderRendimiento(main, rows){
       charts.r_curso = barChart(document.getElementById('r_curso'), cursoLabels,
         cursoLabels.map(k=> (avg(cursoMap.get(k).map(r=>r.eficacia))||0)*100), {isPct:true, max:100});
 
-      const facMap = groupBy(participantes, 'facultad');
+      // A pedido: "por facultad" siempre muestra TODAS las facultades, aunque haya un filtro de
+      // Carrera activo (una carrera pertenece a una sola facultad).
+      const facSource = applyFiltersAllFacultades(ATT).filter(r=>r.condicion==='Participante');
+      const facMap = groupBy(facSource, 'facultad');
       const facEntries = topN(facMap, 20, v=> (avg(v.map(r=>r.eficacia))||0)*100);
       charts.r_facultad = barChart(document.getElementById('r_facultad'),
         facEntries.map(t=>t.label), facEntries.map(t=>t.value), {isPct:true, max:100});
 
-      const carEntries = topN(carMap, 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
+      const carEntries = topN(carMap, carreraFiltrada ? carMap.size : 15, v=> (avg(v.map(r=>r.eficacia))||0)*100);
       charts.r_carrera = barChart(document.getElementById('r_carrera'),
         carEntries.map(t=>t.label), carEntries.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
     }
 
     programCfg.evalTypes.forEach(ev=>{
-      const entries = topN(carMap, 12, v=> avg(v.map(r=>r[ev.key]))||0);
+      const entries = topN(carMap, carreraFiltrada ? carMap.size : 12, v=> avg(v.map(r=>r[ev.key]))||0);
       charts['r_'+ev.key+'_carrera'] = barChart(document.getElementById('r_'+ev.key+'_carrera'),
         entries.map(t=>t.label), entries.map(t=>t.value), {horizontal:true, max:20, thick:12, labelSize:9});
     });
@@ -1301,9 +1348,12 @@ function renderSatisfaccion(main){
   g1.appendChild(chartCard('Nivel de satisfacción por curso (%)', 's_curso_pct'));
   main.appendChild(g1);
 
+  // A pedido: con un filtro de Carrera activo estos gráficos solo tendrían una barra — se quita el
+  // "top 15" del título y del cálculo (mismo criterio que en las demás vistas).
+  const carreraFiltradaSat = !!state.carrera;
   const g2 = grid('1fr 1fr');
-  g2.appendChild(chartCard('Encuestas ejecutadas por carrera — top 15', 's_carrera_n', {tall:true}));
-  g2.appendChild(chartCard('Nivel de satisfacción por carrera — top 15 (%)', 's_carrera_pct', {tall:true}));
+  g2.appendChild(chartCard(carreraFiltradaSat ? 'Encuestas ejecutadas por carrera' : 'Encuestas ejecutadas por carrera — top 15', 's_carrera_n', {tall:true}));
+  g2.appendChild(chartCard(carreraFiltradaSat ? 'Nivel de satisfacción por carrera (%)' : 'Nivel de satisfacción por carrera — top 15 (%)', 's_carrera_pct', {tall:true}));
   main.appendChild(g2);
 
   const qc = card('Preguntas de la encuesta de satisfacción');
@@ -1323,11 +1373,11 @@ function renderSatisfaccion(main){
       cursoLabels.map(k=> avgSatisfaccionPct(cursoMap.get(k), qkeys) ?? 0), {isPct:true, max:100});
 
     const carMap = groupBy(rows, 'carrera');
-    const carEntriesN = topN(carMap, 15, v=> v.length);
+    const carEntriesN = topN(carMap, carreraFiltradaSat ? carMap.size : 15, v=> v.length);
     charts.s_carrera_n = barChart(document.getElementById('s_carrera_n'),
       carEntriesN.map(t=>t.label), carEntriesN.map(t=>t.value), {horizontal:true, thick:14, color:BLUE[1]});
 
-    const carEntriesPct = topN(carMap, 15, v=> avgSatisfaccionPct(v, qkeys) ?? 0);
+    const carEntriesPct = topN(carMap, carreraFiltradaSat ? carMap.size : 15, v=> avgSatisfaccionPct(v, qkeys) ?? 0);
     charts.s_carrera_pct = barChart(document.getElementById('s_carrera_pct'),
       carEntriesPct.map(t=>t.label), carEntriesPct.map(t=>t.value), {horizontal:true, isPct:true, max:100, thick:14});
   });
