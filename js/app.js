@@ -2709,13 +2709,22 @@ function closeExportModal(){
 }
 
 function generateReportFromModal(){
+  // A pedido: Conclusiones ya no es opcional en ningún informe (Nivelación ni Reforzamiento) —
+  // se bloquea la generación si está vacío, en vez de dejar esa sección fuera del informe.
+  const taConclusiones = document.getElementById('taConclusiones');
+  if(!taConclusiones.value.trim()){
+    alert('Escribe las Conclusiones antes de generar el informe — ya no es un campo opcional.');
+    taConclusiones.focus();
+    return;
+  }
+
   reportSignerText.paraNombre = document.getElementById('inParaNombre').value;
   reportSignerText.paraCargo = document.getElementById('inParaCargo').value;
   reportSignerText.deNombre = document.getElementById('inDeNombre').value;
   reportSignerText.deCargo = document.getElementById('inDeCargo').value;
   const contentText = reportContentText[currentProgram];
   contentText.numero = document.getElementById('inNumeroInforme').value;
-  contentText.conclusiones = document.getElementById('taConclusiones').value;
+  contentText.conclusiones = taConclusiones.value;
   contentText.recomendaciones = document.getElementById('taRecomendaciones').value;
   contentText.acciones = document.getElementById('taAcciones').value;
 
