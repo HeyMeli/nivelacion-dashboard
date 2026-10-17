@@ -1084,7 +1084,13 @@ function renderRendimiento(main, rows){
     ? 'display:grid;grid-template-columns:1fr repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:14px;margin-bottom:14px;'
     : 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:14px;');
   const gcardGeneral = card(esReforzamiento ? 'Rendimiento Promedio Obtenido' : 'Rendimiento general');
-  if(esReforzamiento){ gcardGeneral.classList.add('card-highlight'); gcardGeneral.style.gridRow = 'span 2'; }
+  if(esReforzamiento){
+    gcardGeneral.classList.add('card-highlight');
+    gcardGeneral.style.gridRow = 'span 2';
+    // La tarjeta ocupa 2 filas (más alta que las demás) — centra el medidor verticalmente en vez
+    // de dejarlo pegado arriba.
+    gcardGeneral.querySelector('.body').style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;';
+  }
   gcardGeneral.querySelector('.body').appendChild(gaugeCard('g_rend', programCfg.rendGeneral.label, rendGeneral, programCfg.rendGeneral.max, v=>v.toFixed(2), esReforzamiento ? ACCENT.amber : BLUE[0]));
   gaugeRow.appendChild(gcardGeneral);
   programCfg.evalTypes.forEach(ev=>{
