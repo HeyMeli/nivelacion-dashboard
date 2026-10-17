@@ -508,7 +508,7 @@ function activateProgramView(key){
 // de cargar). Ver switchProgram(): ahora applyProgramData() corre de inmediato al cambiar, así que
 // esto es un blindaje adicional, no la única defensa.
 function setUploadControlsEnabled(enabled){
-  ['fileAtt','fileSat','btnClearData'].forEach(id=>{
+  ['fileAtt','fileSat','btnClearData','btnClearAtt','btnClearSat'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.disabled = !enabled;
   });
@@ -2034,6 +2034,8 @@ function setupDataPanel(){
   const fileAtt = document.getElementById('fileAtt');
   const fileSat = document.getElementById('fileSat');
   const btnClear = document.getElementById('btnClearData');
+  const btnClearAtt = document.getElementById('btnClearAtt');
+  const btnClearSat = document.getElementById('btnClearSat');
 
   fileAtt.addEventListener('change', ()=>{
     const programCfg = activeProgram();
@@ -2061,22 +2063,27 @@ function setupDataPanel(){
       },
       { requiredHeaders: programCfg.satRequired, periodoHeader: programCfg.periodoHeaderSat, getLiveUrl: ()=> sourceConfig.satisfactionUrl });
   });
-  btnClear.addEventListener('click', async ()=>{
+  // which: 'att' | 'sat' | 'both' — permite limpiar solo asistencia, solo satisfacción, o ambas
+  // (antes solo existía la opción de limpiar todo, pero a veces solo un formato está mal y no se
+  // quiere rehacer la carga del otro).
+  async function clearDataFormat(which, btn){
     const programLabel = activeProgram().label;
-    const sharedAtt = isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
-    const sharedSat = isAppsScriptWriteUrl(sourceConfig.satisfactionUrl);
+    const formatLabel = which === 'att' ? 'de asistencia' : which === 'sat' ? 'de satisfacción' : '';
+    const sharedAtt = (which === 'att' || which === 'both') && isAppsScriptWriteUrl(sourceConfig.attendanceUrl);
+    const sharedSat = (which === 'sat' || which === 'both') && isAppsScriptWriteUrl(sourceConfig.satisfactionUrl);
     const anyShared = sharedAtt || sharedSat;
+    const whatTxt = which === 'both' ? 'toda la información' : `la información ${formatLabel}`;
 
     const warning = anyShared
-      ? `¿Seguro que quieres limpiar toda la información de ${programLabel}?\n\n⚠️ Esto también borrará TODAS las filas de la base de datos compartida de ${programLabel} en Google Sheets — lo notará TODO EL EQUIPO, no solo tú. Es irreversible. (El otro programa no se ve afectado.)`
-      : `¿Seguro que quieres limpiar toda la información de ${programLabel} cargada? Se borra de este navegador (no hay una fuente compartida configurada). Es irreversible. (El otro programa no se ve afectado.)`;
+      ? `¿Seguro que quieres limpiar ${whatTxt} de ${programLabel}?\n\n⚠️ Esto también borrará TODAS las filas correspondientes de la base de datos compartida en Google Sheets — lo notará TODO EL EQUIPO, no solo tú. Es irreversible. (El otro programa no se ve afectado.)`
+      : `¿Seguro que quieres limpiar ${whatTxt} de ${programLabel} cargada? Se borra de este navegador (no hay una fuente compartida configurada). Es irreversible. (El otro programa no se ve afectado.)`;
     if(!confirm(warning)) return;
     if(anyShared){
       const typed = prompt('Para confirmar el borrado de la base de datos compartida, escribe BORRAR (en mayúsculas):');
       if(typed !== 'BORRAR'){ alert('Cancelado — no se borró nada.'); return; }
     }
 
-    btnClear.disabled = true;
+    btn.disabled = true;
     const errors = [];
     if(sharedAtt){
       try{ await clearSheetViaAppsScript(sourceConfig.attendanceUrl); }
@@ -2086,23 +2093,32 @@ function setupDataPanel(){
       try{ await clearSheetViaAppsScript(sourceConfig.satisfactionUrl); }
       catch(err){ errors.push('Satisfacción: ' + err.message); }
     }
-    btnClear.disabled = false;
+    btn.disabled = false;
 
-    ATT = []; SAT = [];
-    attSourceName = null; satSourceName = null;
-    fileAtt.value = ''; fileSat.value = '';
-    setFileStatus('attStatus', '0 registros', '');
-    setFileStatus('satStatus', '0 registros', '');
-    clearSnapshot();
+    if(which === 'att' || which === 'both'){
+      ATT = []; attSourceName = null; fileAtt.value = '';
+      setFileStatus('attStatus', '0 registros', '');
+    }
+    if(which === 'sat' || which === 'both'){
+      SAT = []; satSourceName = null; fileSat.value = '';
+      setFileStatus('satStatus', '0 registros', '');
+    }
+    if(ATT.length === 0 && SAT.length === 0) await clearSnapshot();
+    else await saveSnapshot();
+
     if(errors.length){
-      setAutosaveStatus(`⚠️ Se limpió ${programLabel} en este navegador, pero la base de datos compartida no se pudo limpiar del todo — ` + errors.join(' · '), 'err');
+      setAutosaveStatus(`⚠️ Se limpió en este navegador, pero la base de datos compartida no se pudo limpiar del todo — ` + errors.join(' · '), 'err');
     } else {
       setAutosaveStatus(anyShared
-        ? `🗑️ Información de ${programLabel} borrada — este navegador y la base de datos compartida quedaron en cero.`
-        : `🗑️ Información de ${programLabel} borrada de este navegador.`, '');
+        ? `🗑️ Información ${which === 'both' ? `de ${programLabel}` : formatLabel + ` de ${programLabel}`} borrada — este navegador y la base de datos compartida quedaron en cero.`
+        : `🗑️ Información ${which === 'both' ? `de ${programLabel}` : formatLabel + ` de ${programLabel}`} borrada de este navegador.`, '');
     }
     afterDataChange();
-  });
+  }
+
+  btnClear.addEventListener('click', ()=> clearDataFormat('both', btnClear));
+  btnClearAtt.addEventListener('click', ()=> clearDataFormat('att', btnClearAtt));
+  btnClearSat.addEventListener('click', ()=> clearDataFormat('sat', btnClearSat));
 
   refreshDataPanelStatus();
 }
