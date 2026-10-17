@@ -2143,17 +2143,6 @@ async function captureTabScreenshots(periodo){
   const main = document.getElementById('main');
   const images = {};
 
-  // A pedido: el logo va en la esquina superior izquierda de cada captura. Se inserta como un
-  // <img> real dentro de #main justo antes de cada captura (y se retira después) para que
-  // html2canvas lo incluya en el mismo pase de renderizado — dibujarlo después sobre el canvas ya
-  // resuelto no es confiable: con esta cantidad de gráficos Chart.js anidados, html2canvas sigue
-  // reescribiendo el canvas después de resolver su promesa y cualquier dibujo posterior se pierde.
-  const savedMainPosition = main.style.position;
-  const savedMainPaddingTop = main.style.paddingTop;
-  if(!savedMainPosition) main.style.position = 'relative';
-  main.style.paddingTop = '52px'; // deja espacio para que el logo no tape el título de cada pestaña
-  const logoOverlay = el('img', { style:'position:absolute;top:10px;left:14px;height:36px;z-index:9999;', src: LOGO_UCSUR_DATA_URI });
-
   Chart.defaults.animation = false;
   state.periodo = periodo;
   window.scrollTo(0, 0);
@@ -2163,22 +2152,44 @@ async function captureTabScreenshots(periodo){
       currentPage = tab.key;
       render();
       await nextFrame(); await nextFrame(); // deja que Chart.js termine su paso de layout + pintado
-      main.appendChild(logoOverlay);
-      try{
-        const canvas = await html2canvas(main, { scale: 1.5, backgroundColor: '#EEF3FA', logging: false, useCORS: true });
-        images['shot_' + tab.key] = canvas.toDataURL('image/jpeg', 0.85);
-      }catch(err){
-        console.error('No se pudo capturar la pestaña "'+tab.key+'":', err);
-      } finally {
-        logoOverlay.remove();
+
+      // A pedido: en vez de una sola captura gigante de toda la pestaña (que al imprimir había
+      // que achicar para que entre en una hoja A4, desperdiciando casi todo el ancho de la
+      // página), se captura cada bloque de #main por separado (título+KPIs, cada fila de
+      // gráficos, la tabla de detalle…). Cada bloque es naturalmente del tamaño de una sección
+      // y entra en una hoja sin reducirlo, y el informe los apila en orden — con el mismo salto
+      // de página entre pestañas que antes.
+      const chunks = [];
+      const children = Array.from(main.children);
+      for(let i=0; i<children.length; i++){
+        const node = children[i];
+        const isFirst = i === 0;
+        // El logo solo va en el primer bloque de cada pestaña (el que trae el título).
+        let logoOverlay = null;
+        const savedPos = node.style.position;
+        const savedPad = node.style.paddingTop;
+        if(isFirst){
+          if(!savedPos) node.style.position = 'relative';
+          node.style.paddingTop = '52px';
+          logoOverlay = el('img', { style:'position:absolute;top:10px;left:14px;height:36px;z-index:9999;', src: LOGO_UCSUR_DATA_URI });
+          node.insertBefore(logoOverlay, node.firstChild);
+        }
+        try{
+          const canvas = await html2canvas(node, { scale: 1.5, backgroundColor: '#EEF3FA', logging: false, useCORS: true });
+          chunks.push(canvas.toDataURL('image/jpeg', 0.85));
+        }catch(err){
+          console.error('No se pudo capturar un bloque de la pestaña "'+tab.key+'":', err);
+        } finally {
+          if(logoOverlay) logoOverlay.remove();
+          if(isFirst){ node.style.position = savedPos; node.style.paddingTop = savedPad; }
+        }
       }
+      images['shot_' + tab.key] = chunks;
     }
   } finally {
     currentPage = savedPage;
     state.periodo = savedPeriodo;
     Chart.defaults.animation = savedAnimation;
-    main.style.position = savedMainPosition;
-    main.style.paddingTop = savedMainPaddingTop;
     render();
   }
   return images;
@@ -2307,8 +2318,10 @@ function buildReportHTML(d, customText, chartImages){
   const carreraTxt = state.carrera || 'las carreras evaluadas';
   const filtrosTxt = [d.facultadLabel && `Facultad: ${d.facultadLabel}`, d.sedeLabel && `Sede: ${d.sedeLabel}`, d.cursoLabel && `Curso: ${d.cursoLabel}`].filter(Boolean).join(' · ');
 
-  function chartImg(key, alt){
-    return chartImages[key] ? `<img class="report-chart" src="${chartImages[key]}" alt="${alt}">` : '';
+  function chartImgs(key, altPrefix){
+    const arr = chartImages[key];
+    if(!arr || !arr.length) return '';
+    return arr.map((src,i)=> `<div class="anexo-chunk"><img class="report-chart" src="${src}" alt="${altPrefix} (parte ${i+1})"></div>`).join('');
   }
 
   const rendRows = d.cursos.map(c => {
@@ -2375,13 +2388,15 @@ function buildReportHTML(d, customText, chartImages){
   tr.totalrow{ background:#F4F8FE; font-weight:700; }
   .report-chart{ max-width:100%; border:1px solid #B9C9DC; border-radius:4px; background:#fff; }
   .anexos-grid{ display:flex; flex-direction:column; gap:18px; }
-  .anexo-item{ page-break-inside:avoid; break-inside:avoid; page-break-before:always; break-before:page; }
+  /* Cada pestaña (Participantes/Asistencia/Rendimiento/Satisfacción) empieza en una hoja nueva,
+     pero dentro de una pestaña sus bloques (título+KPIs, cada fila de gráficos, la tabla...) sí
+     pueden fluir de una hoja a la siguiente con normalidad — son varias imágenes, no una sola. */
+  .anexo-item{ page-break-before:always; break-before:page; }
   .anexo-item:first-child{ page-break-before:avoid; break-before:avoid; }
   .anexo-item h3{ text-decoration:none; }
-  /* La captura entra entera en una sola hoja: si no, "avoid" la empuja a la siguiente página
-     dejando la hoja anterior casi vacía (el error que reportó la usuaria). 24cm deja margen para
-     el <h3> de cada captura dentro de los ~25.7cm útiles de una A4 con los márgenes de @page. */
-  .anexo-item .report-chart{ max-width:100%; max-height:24cm; width:auto; display:block; margin:0 auto; }
+  /* Lo que sí debe evitarse es cortar UN bloque a la mitad entre dos hojas. */
+  .anexo-chunk{ page-break-inside:avoid; break-inside:avoid; margin-bottom:10px; }
+  .anexo-item .report-chart{ max-width:100%; max-height:25cm; width:auto; display:block; margin:0 auto; }
   .sign{ margin-top:60px; text-align:center; }
   .sign-img{ display:block; max-height:70px; max-width:280px; margin:0 auto 4px; }
   .sign .line{ border-top:1px solid #16283F; width:280px; margin:0 auto 4px; padding-top:6px; }
@@ -2443,11 +2458,11 @@ function buildReportHTML(d, customText, chartImages){
     const shots = [
       ['shot_participantes','Participantes'], ['shot_asistencia','Asistencia'],
       ['shot_rendimiento','Rendimiento'], ['shot_satisfaccion','Satisfacción']
-    ].filter(([k]) => chartImages[k]);
+    ].filter(([k]) => chartImages[k] && chartImages[k].length);
     if(!shots.length) return '';
     return `<h2 style="page-break-before:always;">Anexos: capturas del dashboard</h2>
     <p class="note">Estas imágenes muestran cómo se veía el dashboard en pantalla, para el periodo y los filtros seleccionados, al momento de generar este informe.</p>
-    <div class="anexos-grid">${shots.map(([k,label]) => `<div class="anexo-item"><h3>${label}</h3>${chartImg(k, 'Captura de la pestaña '+label)}</div>`).join('')}</div>`;
+    <div class="anexos-grid">${shots.map(([k,label]) => `<div class="anexo-item"><h3>${label}</h3>${chartImgs(k, 'Captura de la pestaña '+label)}</div>`).join('')}</div>`;
   })()}
 
   <div class="sign">
